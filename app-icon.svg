@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16203a"/><stop offset="1" stop-color="#28375f"/>
+    </linearGradient>
+    <filter id="sh" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="16" stdDeviation="26" flood-color="#000814" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#g)"/>
+  
+  <g transform="translate(512 512) scale(1) translate(-512 -512)">
+    <!-- 街区 -->
+    <path d="M0 180H1024 M0 430H1024 M0 700H1024 M0 905H1024 M140 0V1024 M420 0V1024 M700 0V1024 M910 0V1024"
+          stroke="#ffffff" stroke-opacity="0.075" stroke-width="15" fill="none"/>
+    <!-- 歩いた道 -->
+    <path d="M215 835 V690 H470 V520" fill="none" stroke="#ffffff" stroke-width="80"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- 現在地 -->
+    <circle cx="215" cy="835" r="92" fill="#ff6a1f"/>
+    <circle cx="215" cy="835" r="34" fill="#16203a"/>
+    <!-- チラシ -->
+    <g transform="rotate(-10 620 400)" filter="url(#sh)">
+      <rect x="424" y="170" width="418" height="486" rx="38" fill="#ffffff"/>
+      <rect x="488" y="248" width="290" height="68" rx="34" fill="#ff6a1f"/>
+      <rect x="488" y="382" width="290" height="44" rx="22" fill="#b9c3d4"/>
+      <rect x="488" y="474" width="212" height="44" rx="22" fill="#b9c3d4"/>
+    </g>
+  </g>
+</svg>

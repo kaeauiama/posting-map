@@ -1,0 +1,7 @@
+node_modules/
+dev/
+test/out/
+research/*.npy
+research/seg.json
+*.zip
+.DS_Store

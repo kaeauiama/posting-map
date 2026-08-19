@@ -1,0 +1,1950 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>配布マップ</title>
+
+<!-- iOS: ホーム画面に追加したときフルスクリーンのアプリとして起動する -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="配布マップ">
+<meta name="theme-color" content="#16203a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+
+<!--LEAFLET-->
+
+<style>
+  :root{
+    --ink:#182440;
+    --ink-2:#5a6478;
+    --line:#dfe3ec;
+    --accent:#ff6a1f;         /* UIのアクセント（チラシの色には使わない） */
+    --pad-b: env(safe-area-inset-bottom, 0px);
+    --pad-t: env(safe-area-inset-top, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;overscroll-behavior:none;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    color:var(--ink); background:#fff;
+    -webkit-user-select:none; user-select:none; touch-action:manipulation;
+  }
+  #map{position:fixed; inset:0;}
+  .leaflet-container{background:#eef1f6;}
+  button{font-family:inherit; cursor:pointer; border:none; color:var(--ink);}
+
+  /* ---------- 上部ステータス（GPS記録モードのみ） ---------- */
+  #hud{
+    display:none;
+    position:fixed; top:0; left:0; right:0; z-index:1000; pointer-events:none;
+    padding:calc(var(--pad-t) + 8px) 10px 8px;
+    background:linear-gradient(#fffffff2,#fffffff2 70%,#ffffff00);
+    gap:8px;
+  }
+  body.mode-gps #hud{display:flex;}
+  .stat{
+    flex:1; background:#fff; border:1px solid var(--line); border-radius:12px;
+    padding:6px 4px; text-align:center; box-shadow:0 1px 4px #18244014;
+  }
+  .stat b{display:block; font-size:19px; line-height:1.15; font-variant-numeric:tabular-nums;}
+  .stat span{display:block; font-size:10px; color:var(--ink-2); margin-top:2px;}
+  #gpsdot{width:10px;height:10px;border-radius:50%;background:#bbb;display:inline-block;vertical-align:-1px;margin-right:5px;}
+
+  /* ---------- 下部 ---------- */
+  #bottom{
+    position:fixed; left:0; right:0; bottom:0; z-index:1000; pointer-events:none;
+    padding:8px 12px calc(var(--pad-b) + 12px);
+    background:linear-gradient(#ffffff00,#ffffffd9 32%,#fffffff7);
+  }
+  #bottom button, #bottom input, #bottom select{pointer-events:auto;}
+  #credit{text-align:center; font-size:10px; color:var(--ink-2); margin-bottom:4px;}
+  #credit a{color:var(--ink-2);}
+
+  /* チラシの版 */
+  #flyerbar{display:flex; gap:7px; margin-bottom:7px;}
+  #flyerChip{
+    flex:1; min-width:0; display:flex; align-items:center; gap:8px;
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    padding:7px 11px; font-size:13.5px; font-weight:700; box-shadow:0 1px 4px #18244014;
+  }
+  #flyerChip .nm{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  #flyerChip .cv{font-size:11px; color:var(--ink-2); font-weight:600;}
+  .swatch{width:14px;height:14px;border-radius:4px;flex:none;box-shadow:inset 0 0 0 1px #00000022;}
+  #filterChip{
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    padding:7px 11px; font-size:13px; font-weight:700; box-shadow:0 1px 4px #18244014; white-space:nowrap;
+  }
+  #filterChip.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  /* 地図に浮かせる操作ヒント（レイアウトの高さを取らない） */
+  #hintTop{
+    display:none; position:fixed; z-index:1000; left:50%; transform:translateX(-50%);
+    top:calc(var(--pad-t) + 10px); pointer-events:none;
+    background:#ffffffe0; border:1px solid var(--line); border-radius:20px;
+    padding:6px 14px; font-size:12px; font-weight:600; color:var(--ink-2);
+    box-shadow:0 1px 6px #18244018; white-space:nowrap;
+  }
+  body.mode-draw #hintTop, body.mode-area #hintTop, body.mode-erase #hintTop{display:block;}
+
+  /* モード切替 */
+  #modebar{
+    display:flex; background:#eceff5; border-radius:12px; padding:3px;
+    margin-bottom:7px; box-shadow:0 1px 4px #18244014; pointer-events:auto;
+  }
+  #modebar button{flex:1; padding:8px 2px; border-radius:9px; background:transparent;
+                  font-size:13px; font-weight:700; color:var(--ink-2); line-height:1.2;}
+  #modebar button.sel{background:#fff; color:var(--ink); box-shadow:0 1px 4px #1824401f;}
+  #modebar .sep{flex:none; width:1px; margin:5px 4px; background:#c9cfdb;}
+  #ivbar, #radbar, #missbar{display:flex; gap:7px;}
+  #ivbar button, #radbar button, #missbar button{flex:1; padding:11px 0; border-radius:10px;
+                background:#eef1f6; border:1px solid var(--line); font-size:14px; font-weight:700;}
+  #ivbar button.sel, #radbar button.sel, #missbar button.sel{
+                background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  /* GPS記録モードの操作 */
+  #controls{display:none; align-items:flex-end; gap:10px;}
+  body.mode-gps #controls{display:flex;}
+  /* ログ入力モードの操作：1行だけにして地図を広く */
+  #logControls{display:none; align-items:stretch; gap:8px;}
+  body.mode-draw #logControls, body.mode-area #logControls,
+  body.mode-erase #logControls{display:flex;}
+  .col{display:flex; flex-direction:column; gap:8px;}
+  .sq{width:52px;height:52px;border-radius:14px;background:#fff;border:1px solid var(--line);
+      box-shadow:0 2px 8px #1824401f;font-size:20px;display:flex;align-items:center;justify-content:center;}
+  .sq:active{background:#eef1f6;}
+  #mid{flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; pointer-events:none;}
+  #hint{font-size:11px; color:var(--ink-2); text-align:center; line-height:1.3;
+        background:#ffffffcc; border-radius:8px; padding:2px 6px;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  #startBtn{height:56px;border-radius:16px;font-size:19px;font-weight:700;background:var(--ink);color:#fff;
+            box-shadow:0 3px 10px #18244033;display:flex;align-items:center;justify-content:center;}
+  #startBtn.on{background:#dc2626;}
+  #startBtn:active{filter:brightness(.9);}
+  #drawTools{display:flex; gap:8px;}
+  #drawTools > *{height:56px;border-radius:16px;background:#fff;border:1px solid var(--line);
+    box-shadow:0 2px 8px #1824401f;font-size:13px;font-weight:700;white-space:nowrap;
+    display:flex;align-items:center;justify-content:center;text-align:center;}
+  #dayWrap{flex:1; flex-direction:column; gap:1px; line-height:1.15; height:52px;
+           border-radius:14px; background:#fff; border:1px solid var(--line);
+           box-shadow:0 2px 8px #1824401f; display:flex; align-items:center;
+           justify-content:center; pointer-events:auto;}
+  #dayWrap i{font-style:normal; font-size:10px; color:var(--ink-2); font-weight:600;}
+  #dayPick{font-family:inherit;font-size:14px;font-weight:700;color:var(--ink);
+           border:none;padding:0;-webkit-appearance:none;appearance:none;background:transparent;}
+  #undoBtn:active{background:#eef1f6;}
+
+  #countBtn{width:96px;height:96px;border-radius:50%;background:var(--accent);color:#fff;
+    border:4px solid transparent;                    /* いま数えている版の色 */
+    box-shadow:0 4px 16px #ff6a1f55, inset 0 -3px 0 #00000018;
+    font-size:33px;font-weight:800;font-variant-numeric:tabular-nums;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1;}
+  #countBtn small{font-size:10px;font-weight:600;opacity:.85;margin-top:3px;letter-spacing:.05em;}
+  #countBtn:active{transform:scale(.95);}
+  #countBtn.flash{animation:flash .25s;}
+  @keyframes flash{0%{box-shadow:0 0 0 0 #ff6a1f99;}100%{box-shadow:0 0 0 24px #ff6a1f00;}}
+
+  #drawFrame{position:fixed;inset:0;z-index:900;pointer-events:none;display:none;
+             border:3px solid #4a3aa7;border-radius:2px;}
+  body.mode-draw #drawFrame, body.mode-area #drawFrame{display:block;}
+  body.mode-erase #drawFrame{display:block; border-color:#dc2626;}
+
+  /* ---------- パネル共通 ---------- */
+  .sheet{position:fixed;inset:0;z-index:2000;background:#fff;display:none;flex-direction:column;
+    padding:calc(var(--pad-t) + 14px) 16px calc(var(--pad-b) + 16px);
+    overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .sheet.show{display:flex;}
+  .sheet h2{font-size:19px;margin:0 0 14px;}
+  .sheet h3{font-size:13px;color:var(--ink-2);margin:22px 0 8px;font-weight:700;letter-spacing:.04em;}
+  .row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px;}
+  .row .g{flex:1;min-width:0;}
+  .row .g b{display:block;font-size:15px;}
+  .row .g em{display:block;font-style:normal;font-size:12px;color:var(--ink-2);margin-top:2px;}
+  .mini{padding:7px 12px;border-radius:9px;background:#eef1f6;font-size:13px;font-weight:600;border:1px solid var(--line);white-space:nowrap;}
+  .mini.danger{background:#fee;color:#dc2626;border-color:#fcc;}
+  .mini.go{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .wide{width:100%;padding:14px;border-radius:12px;font-size:15px;font-weight:700;
+        background:#eef1f6;margin-top:8px;border:1px solid var(--line);}
+  .wide.nag{background:#fff3e6;border-color:#ffc79a;color:#9a4a00;}
+  .wide.nag::after{content:" ●";color:#ff6a1f;}
+  .closeX{position:absolute;top:calc(var(--pad-t) + 10px);right:12px;width:40px;height:40px;
+          border-radius:50%;background:#eef1f6;font-size:19px;}
+  .note{font-size:12px;line-height:1.7;color:var(--ink-2);background:#f7f8fb;border:1px solid var(--line);
+        border-radius:10px;padding:11px 13px;margin-top:10px;}
+  select.full{font-family:inherit;font-size:14px;padding:9px;border-radius:9px;border:1px solid var(--line);background:#fff;width:100%;}
+  table.tbl{width:100%;border-collapse:collapse;font-size:13px;}
+  table.tbl th{text-align:left;font-size:11px;color:var(--ink-2);padding:6px 4px;border-bottom:1px solid var(--line);font-weight:700;}
+  table.tbl td{padding:8px 4px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;}
+  table.tbl td.r, table.tbl th.r{text-align:right;}
+
+  /* 日ごとの記録・枚数入力 */
+  .dayblk{border-bottom:1px solid var(--line); padding:12px 0;}
+  .dayhead{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+  .dayhead b{font-size:15px;}
+  .daytot{flex:1; font-size:13px; color:var(--ink-2); font-variant-numeric:tabular-nums;}
+  .cntrow{display:flex; align-items:center; gap:8px; padding:5px 0 5px 2px;}
+  .cnm{font-size:13px; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .cin{width:84px; font-family:inherit; font-size:16px; font-weight:700; text-align:right;
+       padding:8px 9px; border:1px solid var(--line); border-radius:9px; background:#fff;
+       -webkit-user-select:text; user-select:text; font-variant-numeric:tabular-nums;}
+  .cun{font-size:12px; color:var(--ink-2);}
+  .cex{flex:1; text-align:right; font-size:11px; color:var(--ink-2); white-space:nowrap;
+       overflow:hidden; text-overflow:ellipsis;}
+
+  /* チラシ編集 */
+  #fEdit{display:none;border:1px solid var(--line);border-radius:12px;padding:13px;margin-top:10px;background:#fafbfd;}
+  #fEdit.show{display:block;}
+  #fName{width:100%;font-family:inherit;font-size:16px;padding:11px;border-radius:9px;
+         border:1px solid var(--line);background:#fff;-webkit-user-select:text;user-select:text;}
+  #fColors{display:flex;gap:8px;margin:12px 0 4px;flex-wrap:wrap;}
+  #fColors button{width:46px;height:46px;border-radius:12px;position:relative;
+                  box-shadow:inset 0 0 0 1px #00000022;font-size:10px;color:#fff;font-weight:700;
+                  display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;}
+  #fColors button.sel::after{content:"✓";position:absolute;inset:0;display:flex;align-items:center;
+                  justify-content:center;font-size:22px;color:#fff;text-shadow:0 1px 3px #0006;}
+  #toast{position:fixed;left:50%;bottom:calc(var(--pad-b) + 252px);transform:translateX(-50%);
+    background:#182440ee;color:#fff;padding:10px 16px;border-radius:20px;font-size:13px;
+    z-index:3000;opacity:0;pointer-events:none;transition:opacity .25s;max-width:88vw;text-align:center;}
+  #toast.show{opacity:1;}
+</style>
+</head>
+<body class="mode-gps">
+
+<div id="map"></div>
+<div id="drawFrame"></div>
+<div id="hintTop"></div>
+
+<div id="hud">
+  <div class="stat"><b id="sCount">0</b><span id="lCount">枚数</span></div>
+  <div class="stat"><b id="sDist">0.00</b><span>GPS距離 km</span></div>
+  <div class="stat"><b id="sTime">0:00</b><span>稼働時間</span></div>
+  <div class="stat"><b id="sPace">–</b><span>枚/時</span></div>
+</div>
+
+<div id="bottom">
+  <div id="credit"><span id="creditTxt"></span></div>
+
+  <div id="flyerbar">
+    <button id="flyerChip">
+      <span class="swatch" id="flyerSw"></span>
+      <span class="nm" id="flyerName">—</span>
+      <span class="cv">切替 ▾</span>
+    </button>
+    <button id="filterChip">全部表示</button>
+  </div>
+
+  <div id="modebar">
+    <button data-mode="gps" class="sel">GPS記録</button>
+    <span class="sep"></span>
+    <button data-mode="draw">なぞる</button>
+    <button data-mode="area">囲む</button>
+    <button data-mode="erase">消す</button>
+  </div>
+
+  <div id="controls">
+    <div class="col">
+      <button class="sq" data-act="menu" aria-label="メニュー">☰</button>
+      <button class="sq" data-act="loc" aria-label="現在地へ">◎</button>
+    </div>
+    <div id="mid">
+      <div id="hint">歩くと軌跡が自動で残ります</div>
+      <button id="startBtn"><span id="gpsdot"></span><span id="startLabel">記録スタート</span></button>
+    </div>
+    <div class="col">
+      <button class="sq" id="minusBtn" aria-label="1枚戻す">−1</button>
+      <button id="countBtn">0<small>まい</small></button>
+    </div>
+  </div>
+
+  <div id="logControls">
+    <button class="sq" data-act="menu" aria-label="メニュー">☰</button>
+    <button class="sq" data-act="loc" aria-label="現在地へ">◎</button>
+    <label id="dayWrap" for="dayPick"><i>記録日</i><input type="date" id="dayPick"></label>
+    <button class="sq" id="undoBtn" aria-label="ひとつ戻す">↶</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- ===================== チラシの版 ===================== -->
+<div id="flyerPanel" class="sheet">
+  <button class="closeX" id="closeFlyer">✕</button>
+  <h2>チラシの版</h2>
+  <div id="flyerList"></div>
+  <button class="wide" id="addFlyer">＋ 新しい版を追加</button>
+
+  <div id="fEdit">
+    <h3 style="margin-top:0;">版の名前</h3>
+    <input id="fName" type="text" placeholder="例：2026春・少年部体験">
+    <h3>地図での色</h3>
+    <div id="fColors"></div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button class="wide" id="fSave" style="background:#182440;color:#fff;border-color:#182440;margin:0;">保存</button>
+      <button class="wide" id="fCancel" style="margin:0;">やめる</button>
+    </div>
+    <button class="wide" id="fDelete" style="background:#fee;color:#dc2626;border-color:#fcc;">この版を削除</button>
+  </div>
+
+  <div class="note">
+    色の6つは、色覚特性のある人でも見分けられる組み合わせを検証して選んでいます。
+    それでも地図上で似て見えるときは、上の「この版だけ」で1つずつ表示してください。
+  </div>
+</div>
+
+<!-- ===================== メニュー ===================== -->
+<div id="panel" class="sheet">
+  <button class="closeX" id="closePanel">✕</button>
+  <h2>配布マップ</h2>
+
+  <h3>チラシの版ごとの集計</h3>
+  <div id="flyerSummary"></div>
+
+  <h3>日ごとの記録・枚数の入力</h3>
+  <div id="histList"></div>
+  <div class="row" style="border-bottom:none;">
+    <div class="g"><b>日付を追加して枚数を入れる</b>
+      <em>地図に記録がない日でも、枚数だけ記録できます</em></div>
+    <input type="date" id="addDay" class="mini" style="font-family:inherit;">
+  </div>
+
+  <h3>地図の種類</h3>
+  <select id="baseSel" class="full">
+    <option value="pale">淡色地図（国土地理院／道が見やすい）</option>
+    <option value="std">標準地図（国土地理院）</option>
+    <option value="photo">航空写真（国土地理院）</option>
+    <option value="osm">OpenStreetMap</option>
+  </select>
+
+  <h3>配り漏れチェック</h3>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>表示のしかた</b>
+      <em>エリア＝通った帯の外を暗くする／道路＝取り込んだ道を「配布済み・未配布」で塗り分ける</em></div>
+    <div id="missbar">
+      <button data-miss="none">なし</button>
+      <button data-miss="area">エリア</button>
+      <button data-miss="road">道路</button>
+    </div>
+  </div>
+  <div class="row">
+    <div class="g"><b>商圏の中心</b><em id="homeState">未設定</em></div>
+    <button class="mini" id="setHomeMap">地図の中心</button>
+    <button class="mini" id="setHomeGps">現在地</button>
+  </div>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>商圏の半径</b>
+      <em>道場から歩いて通える範囲にしてください</em></div>
+    <div id="radbar"></div>
+  </div>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>道路データ</b><em id="roadState">未取得</em></div>
+    <div style="display:flex; gap:7px;">
+      <button class="mini" id="roadFetch" style="flex:1;padding:11px 0;">Overpassから取得</button>
+      <button class="mini" id="roadImport" style="flex:1;padding:11px 0;">ファイルから読み込む</button>
+    </div>
+    <button class="wide" id="roadClear" style="display:none;background:#fee;color:#dc2626;border-color:#fcc;">
+      道路データを削除
+    </button>
+    <input type="file" id="roadFile" accept=".geojson,.json,application/json,application/geo+json"
+           multiple style="display:none">
+  </div>
+  <div class="note">
+    <b>エリア表示</b>は道路データを使いません。「通った帯の外＝まだ行っていない」と塗るだけなので、
+    行き止まりや私有地も暗く残ります。<br>
+    <b>道路表示</b>は実際の道を1本ずつ見て、<b>近くに建物がある道</b>だけを対象にします。
+    公園の遊歩道や河川敷は自動で除外されます。<br>
+    道路データは <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>（ODbL）です。
+    取り込みは<b>1回だけ</b>で、以降はオフラインで動きます。
+  </div>
+
+  <h3>GPS記録</h3>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>記録の間隔</b>
+      <em>この秒数ごとに1点だけ残します。曲がり角は間隔を待たずに記録されます</em></div>
+    <div id="ivbar"></div>
+  </div>
+  <div class="note">
+    間隔を長くすると記録する点が減り、線の描き直しが軽くなります。ただし
+    <b>GPSそのものの消費電力はあまり変わりません</b>（受信機は動き続けるため）。
+    ポスティング中に一番電池を使うのは<b>点けっぱなしの画面</b>なので、
+    明るさを下げるか、モバイルバッテリーを持つのが確実です。
+  </div>
+
+  <h3>表示</h3>
+  <div class="row">
+    <div class="g"><b>配布済みをすべて表示</b><em>GPSの軌跡と手描きの記録を重ねて表示します</em></div>
+    <button class="mini" id="tgHist">ON</button>
+  </div>
+  <div class="row">
+    <div class="g"><b>線の太さを実際の幅に合わせる</b><em>ズームしても「配った幅」が変わって見えません</em></div>
+    <button class="mini" id="tgMetric">ON</button>
+  </div>
+  <div class="row">
+    <div class="g"><b>画面を消さない（Wake Lock）</b><em id="wlState">GPS記録中のみ有効</em></div>
+    <button class="mini" id="tgWake">ON</button>
+  </div>
+
+  <h3>データの安全</h3>
+  <div class="row">
+    <div class="g"><b id="stPersist">確認中…</b><em id="stPersistNote"></em></div>
+    <button class="mini" id="stAsk">要求する</button>
+  </div>
+  <div class="row">
+    <div class="g"><b id="stBackup">最後のバックアップ：—</b><em id="stUsage"></em></div>
+  </div>
+  <div class="note" id="stTab" style="display:none;border-color:#f6c9a8;background:#fff6ef;">
+    <b>いまSafariのタブで開いています。</b><br>
+    この状態だと、7日間使わないと記録が消えることがあります。
+    共有ボタン →「ホーム画面に追加」で追加し、そのアイコンから起動してください。
+  </div>
+  <button class="wide" id="stBroken" style="display:none;background:#fee;color:#dc2626;border-color:#fcc;">
+    読み込めなかったデータを書き出す
+  </button>
+
+  <h3>書き出し・バックアップ</h3>
+  <button class="wide" id="expCsv">CSVで書き出し（日付・版・枚数）</button>
+  <button class="wide" id="expJson">JSONで書き出し（バックアップ）</button>
+  <button class="wide" id="expGpx">GPXで書き出し（他アプリ用）</button>
+  <button class="wide" id="impJson">JSONを読み込み（復元）</button>
+  <input type="file" id="fileIn" accept=".json,application/json" style="display:none">
+
+  <div class="note">
+    <b>4つのモード</b><br>
+    <b>GPS記録</b>… 歩きながら自動で軌跡を残す。iPhoneは他のアプリに切り替えるとGPSが止まるので、この画面を出したままに。<br>
+    <b>なぞる</b>… 1本指で地図をなぞって「配った道」を引く。2本指なら地図の移動・拡大。<br>
+    <b>囲む</b>… 1本指でぐるっと囲むと範囲が面で塗られます。<br>
+    <b>消す</b>… 手描きの線・面をタップで消す。GPSの記録は日ごとの記録から削除。<br><br>
+    記録はすべて<b>「いま選んでいるチラシの版」</b>に紐づきます。版を切り替えてから記録してください。
+    あとからまとめて描くときは、<b>記録日</b>も忘れずに合わせてください。
+  </div>
+
+  <button class="wide" id="wipe" style="background:#fee;color:#dc2626;border-color:#fcc;">すべての記録を削除</button>
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================
+   チラシの版の色
+   dataviz の検証済みカテゴリ配色から、全ペアで見分けがつく6色を選定
+   （検証: node scripts/validate_palette.js ... --pairs all → ALL CHECKS PASS）
+   線種は色覚特性への二重符号化（secondary encoding）
+   ========================================================= */
+const PALETTE = [
+  {hex:"#2a78d6", name:"青",   dash:null},        // 最初の4色はどれも地図上で十分な濃さ
+  {hex:"#e34948", name:"赤",   dash:"34 8 6 8"},  // 線種は色覚特性への二重符号化
+  {hex:"#008300", name:"緑",   dash:"90 8"},
+  {hex:"#4a3aa7", name:"紫",   dash:"18 7"},
+  {hex:"#1baf7a", name:"青緑", dash:"6 9"},       // 5色目以降はやや薄い。名前と凡例で補う
+  {hex:"#eda100", name:"黄",   dash:"50 9"}
+];
+const dashOf = hex => (PALETTE.find(p=>p.hex===hex)||{}).dash || null;
+
+/* =========================================================
+   保存データ
+   ========================================================= */
+const KEY  = "postingmap.v1";
+const PREF = "postingmap.pref.v1";
+const uid  = () => Date.now()*1000 + Math.floor(performance.now()%1000);
+
+let loadError = false;              // 保存データが壊れていた（＝退避済み）
+function loadDB(){
+  let d = {}, raw = null;
+  try{
+    raw = localStorage.getItem(KEY);
+    d = JSON.parse(raw) || {};
+  }catch(e){
+    // 壊れたデータをそのまま上書きして消さないよう、別キーに退避しておく
+    if(raw && raw.length > 2){
+      try{ localStorage.setItem(KEY + ".broken." + Date.now(), raw); }catch(_){}
+      loadError = true;
+    }
+    d = {};
+  }
+  if(!Array.isArray(d.sessions)) d.sessions = [];
+  if(!Array.isArray(d.marks))    d.marks    = [];
+  if(!Array.isArray(d.flyers))   d.flyers   = [];
+
+  if(!d.flyers.length){
+    d.flyers = [{id:1, name:"チラシ 1", color:PALETTE[0].hex, created:Date.now()}];
+  }
+  if(!d.current || !d.flyers.some(f=>f.id===d.current)) d.current = d.flyers[0].id;
+
+  // v1（版なし）からの移行：すべて最初の版に紐づける
+  const f0 = d.flyers[0].id;
+  d.sessions.forEach(s=>{ if(s.f == null) s.f = f0; });
+  d.marks.forEach(m=>{ if(m.f == null) m.f = f0; });
+  if(!d.tally || typeof d.tally !== "object") d.tally = {};
+  const keys = Object.keys(d.tally);
+  if(keys.length && /^\d{4}-\d{2}-\d{2}$/.test(keys[0])){       // 旧形式 {day:n}
+    const old = d.tally; d.tally = {}; d.tally[f0] = old;
+  }
+  d.flyers.forEach(f=>{ if(!d.tally[f.id]) d.tally[f.id] = {}; });
+  return d;
+}
+function saveDB(){
+  dataVer++;
+  try{ localStorage.setItem(KEY, JSON.stringify(db)); }
+  catch(e){ toast("保存できませんでした（容量不足かもしれません）"); }
+}
+function loadPref(){
+  const def = {base:"pale", hist:true, wake:true, metric:true, mode:"gps", only:false, interval:10,
+               miss:"none", home:null, radius:1500};
+  try{
+    const p = Object.assign(def, JSON.parse(localStorage.getItem(PREF)) || {});
+    if(p.fog !== undefined){ if(p.fog && p.miss==="none") p.miss="area"; delete p.fog; }
+    return p;
+  }catch(e){ return def; }
+}
+function savePref(){ localStorage.setItem(PREF, JSON.stringify(pref)); }
+
+let db   = loadDB();
+let pref = loadPref();
+
+/* =========================================================
+   道路データ（OpenStreetMap）
+   道を25m前後の区間に切り、近くに建物がある区間だけを「配布対象」にする。
+   歩いた線・なぞった線から20m以内の区間を「配布済み」とみなす。
+   ========================================================= */
+const RKEY = "postingmap.roads.v1";
+const SEG_M  = 25;    // 区間の長さ
+const SNAP_M = 20;    // この距離まで近づけば「その道を配った」とみなす
+const NEAR_B = 30;    // 建物がこの距離内にある区間だけ配布対象にする
+const ROAD_SKIP = new Set(["motorway","motorway_link","trunk","trunk_link",
+                           "proposed","construction","raceway","bus_guideway","escape"]);
+
+let roads = null;          // 展開済みの道路データ
+let covCache = null, covVer = -1, dataVer = 0;
+
+const mpdLat = 111320;
+function projLat(lat){ return lat * mpdLat; }
+function projLng(lng, lat0){ return lng * mpdLat * Math.cos(lat0*Math.PI/180); }
+
+/* ---- 保存形式 {ts,bbox,types,seg:[t,lat1e5,lng1e5,dlat,dlng,...]} ---- */
+function saveRoads(r){
+  try{ localStorage.setItem(RKEY, JSON.stringify({ts:r.ts, bbox:r.bbox, types:r.types, seg:r.seg}));
+       return true; }
+  catch(e){ toast("道路データを保存できませんでした（容量不足）"); return false; }
+}
+function hydrate(o){
+  const n = o.seg.length/5;
+  const r = {ts:o.ts, bbox:o.bbox, types:o.types, seg:o.seg, n,
+             lat1:new Float64Array(n), lng1:new Float64Array(n),
+             lat2:new Float64Array(n), lng2:new Float64Array(n),
+             t:new Uint8Array(n), len:new Float32Array(n)};
+  const lat0 = (o.bbox[0]+o.bbox[2])/2;
+  r.lat0 = lat0;
+  r.x1=new Float64Array(n); r.y1=new Float64Array(n);
+  r.x2=new Float64Array(n); r.y2=new Float64Array(n);
+  for(let i=0;i<n;i++){
+    const k=i*5;
+    const la1=o.seg[k+1]/1e5, ln1=o.seg[k+2]/1e5;
+    const la2=(o.seg[k+1]+o.seg[k+3])/1e5, ln2=(o.seg[k+2]+o.seg[k+4])/1e5;
+    r.t[i]=o.seg[k]; r.lat1[i]=la1; r.lng1[i]=ln1; r.lat2[i]=la2; r.lng2[i]=ln2;
+    r.x1[i]=projLng(ln1,lat0); r.y1[i]=projLat(la1);
+    r.x2[i]=projLng(ln2,lat0); r.y2[i]=projLat(la2);
+    r.len[i]=Math.hypot(r.x2[i]-r.x1[i], r.y2[i]-r.y1[i]);
+  }
+  // 格子インデックス（40m）
+  const CELL=40; r.cell=CELL; r.grid=new Map();
+  const key=(gx,gy)=> gx*1000003 + gy;
+  for(let i=0;i<n;i++){
+    const gx0=Math.floor(Math.min(r.x1[i],r.x2[i])/CELL), gx1=Math.floor(Math.max(r.x1[i],r.x2[i])/CELL);
+    const gy0=Math.floor(Math.min(r.y1[i],r.y2[i])/CELL), gy1=Math.floor(Math.max(r.y1[i],r.y2[i])/CELL);
+    for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){
+      const k=key(gx,gy); let a=r.grid.get(k); if(!a){a=[]; r.grid.set(k,a);} a.push(i);
+    }
+  }
+  r.key = key;
+  r.totalKm = 0; for(let i=0;i<n;i++) r.totalKm += r.len[i]; r.totalKm/=1000;
+  return r;
+}
+function loadRoads(){
+  try{ const o=JSON.parse(localStorage.getItem(RKEY)); return o && o.seg ? hydrate(o) : null; }
+  catch(e){ return null; }
+}
+
+/* ---- Overpass / GeoJSON をどちらも受け取って線に正規化 ---- */
+function normalizeWays(json){
+  const out=[];                                  // [{tag, coords:[[lng,lat],...]}]
+  if(json && Array.isArray(json.features)){      // GeoJSON（overpass turbo の書き出し）
+    json.features.forEach(f=>{
+      const p=f.properties||{}, g=f.geometry; if(!g) return;
+      const tag=p.highway; if(!tag) return;
+      if(p.area==="yes") return;
+      const push=c=>out.push({tag, coords:c});
+      if(g.type==="LineString") push(g.coordinates);
+      else if(g.type==="MultiLineString") g.coordinates.forEach(push);
+      else if(g.type==="Polygon") g.coordinates.forEach(push);
+      else if(g.type==="MultiPolygon") g.coordinates.forEach(poly=>poly.forEach(push));
+    });
+  }else if(json && Array.isArray(json.elements)){ // Overpass JSON（out geom）
+    json.elements.forEach(e=>{
+      const tag=(e.tags||{}).highway; if(!tag || !e.geometry) return;
+      if((e.tags||{}).area==="yes") return;
+      out.push({tag, coords:e.geometry.map(q=>[q.lon,q.lat])});
+    });
+  }
+  return out;
+}
+function normalizeBuildings(json){
+  const pts=[];
+  if(json && Array.isArray(json.features)){
+    json.features.forEach(f=>{
+      const g=f.geometry; if(!g) return;
+      const rings = g.type==="Polygon" ? [g.coordinates[0]]
+                  : g.type==="MultiPolygon" ? g.coordinates.map(p=>p[0])
+                  : g.type==="Point" ? [[g.coordinates]] : [];
+      rings.forEach(r=>{
+        let sx=0, sy=0; r.forEach(p=>{sx+=p[0]; sy+=p[1];});
+        pts.push([sx/r.length, sy/r.length]);
+      });
+    });
+  }else if(json && Array.isArray(json.elements)){
+    json.elements.forEach(e=>{
+      if(e.center) pts.push([e.center.lon, e.center.lat]);
+      else if(e.lon!=null) pts.push([e.lon, e.lat]);
+      else if(e.geometry){
+        let sx=0,sy=0; e.geometry.forEach(q=>{sx+=q.lon; sy+=q.lat;});
+        pts.push([sx/e.geometry.length, sy/e.geometry.length]);
+      }
+    });
+  }
+  return pts;
+}
+
+/* ---- 線を25m区間に切り、建物の近くだけ残す ---- */
+function buildRoads(waysJson, buildingsJson, bbox){
+  const ways = normalizeWays(waysJson);
+  if(!ways.length) throw new Error("道路が見つかりませんでした");
+  const bpts = normalizeBuildings(buildingsJson||{});
+  const lat0 = (bbox[0]+bbox[2])/2;
+
+  const types=[]; const ti=new Map();
+  const raw=[];                                  // [t, lat1,lng1, lat2,lng2]
+  ways.forEach(w=>{
+    if(ROAD_SKIP.has(w.tag)) return;
+    if(!ti.has(w.tag)){ ti.set(w.tag, types.length); types.push(w.tag); }
+    const t=ti.get(w.tag);
+    const c=w.coords;
+    for(let i=1;i<c.length;i++){
+      const ax=projLng(c[i-1][0],lat0), ay=projLat(c[i-1][1]);
+      const bx=projLng(c[i][0],lat0),   by=projLat(c[i][1]);
+      const d=Math.hypot(bx-ax, by-ay);
+      const n=Math.max(1, Math.round(d/SEG_M));
+      for(let k=0;k<n;k++){
+        const t0=k/n, t1=(k+1)/n;
+        raw.push([t,
+          c[i-1][1]+(c[i][1]-c[i-1][1])*t0, c[i-1][0]+(c[i][0]-c[i-1][0])*t0,
+          c[i-1][1]+(c[i][1]-c[i-1][1])*t1, c[i-1][0]+(c[i][0]-c[i-1][0])*t1]);
+      }
+    }
+  });
+
+  // 建物の格子（NEAR_B で近接判定）
+  let keep = raw.map(()=>true);
+  if(bpts.length){
+    const CELL=NEAR_B, bg=new Map();
+    const k2=(gx,gy)=>gx*1000003+gy;
+    bpts.forEach(p=>{
+      const gx=Math.floor(projLng(p[0],lat0)/CELL), gy=Math.floor(projLat(p[1])/CELL);
+      const k=k2(gx,gy); let a=bg.get(k); if(!a){a=[]; bg.set(k,a);} a.push(p);
+    });
+    keep = raw.map(s=>{
+      const mx=projLng((s[2]+s[4])/2, lat0), my=projLat((s[1]+s[3])/2);
+      const gx=Math.floor(mx/CELL), gy=Math.floor(my/CELL);
+      for(let i=-1;i<=1;i++) for(let j=-1;j<=1;j++){
+        const a=bg.get(k2(gx+i,gy+j)); if(!a) continue;
+        for(const p of a){
+          const dx=projLng(p[0],lat0)-mx, dy=projLat(p[1])-my;
+          if(dx*dx+dy*dy <= NEAR_B*NEAR_B) return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  const seg=[];
+  raw.forEach((s,i)=>{
+    if(!keep[i]) return;
+    const a1=Math.round(s[1]*1e5), a2=Math.round(s[2]*1e5);
+    seg.push(s[0], a1, a2, Math.round(s[3]*1e5)-a1, Math.round(s[4]*1e5)-a2);
+  });
+  if(!seg.length) throw new Error("配布対象の道が見つかりませんでした");
+  return {ts:Date.now(), bbox, types, seg};
+}
+
+/* ---- 配布済み判定 ---- */
+function segDistSq(i, px, py){
+  const ax=roads.x1[i], ay=roads.y1[i], vx=roads.x2[i]-ax, vy=roads.y2[i]-ay;
+  const L=vx*vx+vy*vy;
+  let t = L>0 ? ((px-ax)*vx+(py-ay)*vy)/L : 0;
+  t = t<0?0:(t>1?1:t);
+  const dx=px-(ax+vx*t), dy=py-(ay+vy*t);
+  return dx*dx+dy*dy;
+}
+function markNear(px, py, hit){
+  const C=roads.cell, r=SNAP_M+SEG_M, R2=SNAP_M*SNAP_M;
+  const gx0=Math.floor((px-r)/C), gx1=Math.floor((px+r)/C);
+  const gy0=Math.floor((py-r)/C), gy1=Math.floor((py+r)/C);
+  for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){
+    const a=roads.grid.get(roads.key(gx,gy)); if(!a) continue;
+    for(const i of a) if(!hit[i] && segDistSq(i,px,py)<=R2) hit[i]=1;
+  }
+}
+function markLine(pts, hit){
+  const lat0=roads.lat0, STEP=8;
+  for(let i=1;i<pts.length;i++){
+    const ax=projLng(pts[i-1][1],lat0), ay=projLat(pts[i-1][0]);
+    const bx=projLng(pts[i][1],lat0),   by=projLat(pts[i][0]);
+    const d=Math.hypot(bx-ax,by-ay);
+    if(d>400) { markNear(ax,ay,hit); markNear(bx,by,hit); continue; }
+    const n=Math.max(1, Math.ceil(d/STEP));
+    for(let k=0;k<=n;k++) markNear(ax+(bx-ax)*k/n, ay+(by-ay)*k/n, hit);
+  }
+}
+function markArea(pts, hit){
+  const lat0=roads.lat0;
+  const poly=pts.map(p=>[projLng(p[1],lat0), projLat(p[0])]);
+  let mnx=1e18,mny=1e18,mxx=-1e18,mxy=-1e18;
+  poly.forEach(p=>{ mnx=Math.min(mnx,p[0]); mxx=Math.max(mxx,p[0]);
+                    mny=Math.min(mny,p[1]); mxy=Math.max(mxy,p[1]); });
+  const inside=(x,y)=>{
+    let s=false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+      const xi=poly[i][0], yi=poly[i][1], xj=poly[j][0], yj=poly[j][1];
+      if((yi>y)!==(yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) s=!s;
+    }
+    return s;
+  };
+  for(let i=0;i<roads.n;i++){
+    if(hit[i]) continue;
+    const mx=(roads.x1[i]+roads.x2[i])/2, my=(roads.y1[i]+roads.y2[i])/2;
+    if(mx<mnx-SNAP_M||mx>mxx+SNAP_M||my<mny-SNAP_M||my>mxy+SNAP_M) continue;
+    if(inside(mx,my)) hit[i]=1;
+  }
+}
+function coverage(){
+  if(!roads) return null;
+  if(covCache && covVer===dataVer) return covCache;
+  const per = new Map();
+  const get = f => { let a=per.get(f); if(!a){ a=new Uint8Array(roads.n); per.set(f,a); } return a; };
+  db.sessions.forEach(s=>{ if(s.pts && s.pts.length>1) markLine(s.pts, get(s.f)); });
+  db.marks.forEach(m=>{
+    if(!m.pts || m.pts.length<2) return;
+    if(m.type==="area") markArea(m.pts, get(m.f)); else markLine(m.pts, get(m.f));
+  });
+  if(cur && cur.pts.length>1) markLine(cur.pts, get(cur.f));
+  const any = new Uint8Array(roads.n);
+  per.forEach(a=>{ for(let i=0;i<roads.n;i++) if(a[i]) any[i]=1; });
+  covCache = {per, any}; covVer = dataVer;
+  return covCache;
+}
+function inHome(i){
+  if(!pref.home) return true;
+  const lat0=roads.lat0;
+  const hx=projLng(pref.home[1],lat0), hy=projLat(pref.home[0]);
+  const mx=(roads.x1[i]+roads.x2[i])/2, my=(roads.y1[i]+roads.y2[i])/2;
+  return (mx-hx)*(mx-hx)+(my-hy)*(my-hy) <= pref.radius*pref.radius;
+}
+function roadStats(flyerId){
+  if(!roads) return null;
+  const c = coverage(); if(!c) return null;
+  const a = flyerId==null ? c.any : (c.per.get(flyerId) || new Uint8Array(roads.n));
+  let tot=0, done=0, nTot=0, nDone=0;
+  const lat0=roads.lat0;
+  const hx = pref.home ? projLng(pref.home[1],lat0) : 0;
+  const hy = pref.home ? projLat(pref.home[0]) : 0;
+  const R2 = pref.radius*pref.radius;
+  for(let i=0;i<roads.n;i++){
+    if(pref.home){
+      const mx=(roads.x1[i]+roads.x2[i])/2, my=(roads.y1[i]+roads.y2[i])/2;
+      if((mx-hx)*(mx-hx)+(my-hy)*(my-hy) > R2) continue;
+    }
+    tot += roads.len[i]; nTot++;
+    if(a[i]){ done += roads.len[i]; nDone++; }
+  }
+  return {km:tot/1000, doneKm:done/1000, n:nTot, done:nDone,
+          pct: tot>0 ? 100*done/tot : 0};
+}
+
+
+const pad2  = n => String(n).padStart(2,"0");
+const dayOf = ts => { const d=new Date(ts); return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); };
+const today = () => dayOf(Date.now());
+
+const flyer   = id => db.flyers.find(f=>f.id===id) || db.flyers[0];
+const curF    = () => flyer(db.current);
+const fColor  = id => (flyer(id)||{}).color || "#888";
+const fName   = id => (flyer(id)||{}).name  || "（削除済み）";
+
+/* =========================================================
+   地図
+   ========================================================= */
+const BASES = {
+  pale : {url:"https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
+          attr:"<a href='https://maps.gsi.go.jp/development/ichiran.html'>国土地理院</a>", max:20},
+  std  : {url:"https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
+          attr:"<a href='https://maps.gsi.go.jp/development/ichiran.html'>国土地理院</a>", max:18},
+  photo: {url:"https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg",
+          attr:"<a href='https://maps.gsi.go.jp/development/ichiran.html'>国土地理院</a>", max:18},
+  osm  : {url:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+          attr:"&copy; OpenStreetMap contributors", max:19}
+};
+const map = L.map("map", {zoomControl:false, attributionControl:false, tap:false, preferCanvas:true})
+             .setView([35.681, 139.767], 16);
+let baseLayer = null;
+function setBase(k){
+  if(baseLayer) map.removeLayer(baseLayer);
+  const b = BASES[k] || BASES.pale;
+  baseLayer = L.tileLayer(b.url, {maxZoom:b.max, maxNativeZoom:b.max}).addTo(map);
+  if(baseLayer.bringToBack) baseLayer.bringToBack();
+  pref.base = k; savePref();
+  if(typeof syncCredit === "function") syncCredit();
+  else document.getElementById("creditTxt").innerHTML = "出典 " + b.attr;
+}
+setBase(pref.base);
+
+
+
+const WIDTH_M = 12;                       // 線として描く「配った幅」の想定（m）
+const FOG_M   = 30;                       // 1本の道を歩いて配れる帯の幅（両側の家まで含めて）
+function strokeWeight(){
+  if(!pref.metric) return 7;
+  const c = map.getCenter();
+  const mPerPx = 40075016.686 * Math.cos(c.lat*Math.PI/180) / Math.pow(2, map.getZoom()+8);
+  return Math.max(5, Math.min(38, WIDTH_M / mPerPx));
+}
+
+/* 商圏の円を薄暗く覆い、通った（配った）帯の分だけ消しゴムで抜く。
+   残った暗い所＝まだ行っていない所。道路データを使わずに配り漏れが見える。 */
+const FogLayer = L.Layer.extend({
+  onAdd(map){
+    this._map = map;
+    const c = this._c = L.DomUtil.create("canvas", "leaflet-layer fog-canvas");
+    c.style.pointerEvents = "none";
+    map.getPanes().overlayPane.appendChild(c);
+    map.on("move resize", this._schedule, this);
+    map.on("moveend zoomend viewreset", this._now, this);
+    map.on("zoomstart", this._hide, this);
+    this._now();
+  },
+  onRemove(map){
+    map.off("move resize", this._schedule, this);
+    map.off("moveend zoomend viewreset", this._now, this);
+    map.off("zoomstart", this._hide, this);
+    L.DomUtil.remove(this._c);
+  },
+  // 拡大縮小のアニメ中は歪むので隠し、終わってから描き直す
+  _hide(){ this._c.style.opacity = "0"; },
+  _schedule(){
+    if(this._raf) return;
+    this._raf = requestAnimationFrame(()=>{ this._raf = 0; this.redraw(); });
+  },
+  _now(){
+    if(this._raf){ cancelAnimationFrame(this._raf); this._raf = 0; }
+    this.redraw();
+  },
+  redraw(){
+    const map = this._map, c = this._c;
+    if(!map) return;
+    const size = map.getSize(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    if(c.width !== size.x*dpr || c.height !== size.y*dpr){
+      c.width = size.x*dpr; c.height = size.y*dpr;
+      c.style.width = size.x+"px"; c.style.height = size.y+"px";
+    }
+    L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0,0]));
+    c.style.opacity = "1";
+    const g = c.getContext("2d");
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,size.x,size.y);
+    if(pref.miss!=="area" || !pref.home) return;
+
+    const P = ll => { const q = map.latLngToContainerPoint(L.latLng(ll[0], ll[1])); return q; };
+    const home = P(pref.home);
+    // 半径をピクセルに直す
+    const edge = map.latLngToContainerPoint(
+      L.latLng(pref.home[0], pref.home[1] + pref.radius/(111320*Math.cos(pref.home[0]*Math.PI/180))));
+    const rpx = Math.abs(edge.x - home.x);
+    if(rpx < 2) return;
+
+    g.save();
+    g.beginPath(); g.arc(home.x, home.y, rpx, 0, Math.PI*2); g.clip();
+    g.fillStyle = "rgba(18,28,50,0.30)";
+    g.fillRect(0,0,size.x,size.y);
+
+    // 配った帯を抜く
+    g.globalCompositeOperation = "destination-out";
+    // 1本歩けば両側の家に配れるので、線の幅より広く抜く
+    const mPerPx = 40075016.686 * Math.cos(map.getCenter().lat*Math.PI/180) / Math.pow(2, map.getZoom()+8);
+    g.lineWidth = Math.max(6, FOG_M / mPerPx);
+    g.lineCap = "round"; g.lineJoin = "round";
+    g.strokeStyle = "#000"; g.fillStyle = "#000";
+    const view = map.getBounds().pad(0.25);
+    const stroke = pts => {
+      if(!pts || pts.length < 2) return;
+      if(!view.intersects(L.latLngBounds(pts))) return;
+      g.beginPath();
+      pts.forEach((q,i)=>{ const a = P(q); i ? g.lineTo(a.x,a.y) : g.moveTo(a.x,a.y); });
+      g.stroke();
+    };
+    db.sessions.forEach(x=>{ if(visible(x.f)) stroke(x.pts); });
+    db.marks.forEach(m=>{
+      if(!visible(m.f)) return;
+      if(m.type === "area"){
+        if(m.pts.length < 3 || !view.intersects(L.latLngBounds(m.pts))) return;
+        g.beginPath();
+        m.pts.forEach((q,i)=>{ const a = P(q); i ? g.lineTo(a.x,a.y) : g.moveTo(a.x,a.y); });
+        g.closePath(); g.fill(); g.stroke();
+      }else stroke(m.pts);
+    });
+    if(tracking && cur) stroke(cur.pts);
+    g.restore();
+
+    // 商圏のふち
+    g.globalCompositeOperation = "source-over";
+    g.beginPath(); g.arc(home.x, home.y, rpx, 0, Math.PI*2);
+    g.strokeStyle = "rgba(16,26,48,0.55)"; g.lineWidth = 2; g.setLineDash([7,6]); g.stroke();
+    g.setLineDash([]);
+  }
+});
+const fog = new FogLayer();
+
+
+/* ---- 道路の色分け表示（軌跡より下のレイヤに描く） ---- */
+map.createPane("missPane");
+map.getPane("missPane").style.zIndex = 350;
+const RoadLayer = L.Layer.extend({
+  onAdd(map){
+    this._map = map;
+    const c = this._c = L.DomUtil.create("canvas", "leaflet-layer road-canvas");
+    c.style.pointerEvents = "none";
+    map.getPane("missPane").appendChild(c);
+    map.on("move resize", this._sched, this);
+    map.on("moveend zoomend viewreset", this._now, this);
+    map.on("zoomstart", this._hide, this);
+    this._now();
+  },
+  onRemove(map){
+    map.off("move resize", this._sched, this);
+    map.off("moveend zoomend viewreset", this._now, this);
+    map.off("zoomstart", this._hide, this);
+    L.DomUtil.remove(this._c);
+  },
+  _hide(){ this._c.style.opacity="0"; },
+  _sched(){ if(this._raf) return;
+            this._raf = requestAnimationFrame(()=>{ this._raf=0; this.redraw(); }); },
+  _now(){ if(this._raf){ cancelAnimationFrame(this._raf); this._raf=0; } this.redraw(); },
+  redraw(){
+    const map=this._map, c=this._c; if(!map) return;
+    const size=map.getSize(), dpr=Math.min(2, window.devicePixelRatio||1);
+    if(c.width!==size.x*dpr || c.height!==size.y*dpr){
+      c.width=size.x*dpr; c.height=size.y*dpr;
+      c.style.width=size.x+"px"; c.style.height=size.y+"px";
+    }
+    L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0,0]));
+    c.style.opacity="1";
+    const g=c.getContext("2d");
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,size.x,size.y);
+    if(pref.miss!=="road" || !roads) return;
+    const cov=coverage(); if(!cov) return;
+    const a = pref.only ? (cov.per.get(db.current) || new Uint8Array(roads.n)) : cov.any;
+    const b=map.getBounds().pad(0.15);
+    const s=b.getSouth(), n=b.getNorth(), w=b.getWest(), e=b.getEast();
+    const z=map.getZoom();
+    const wDone = z>=17 ? 4 : (z>=15 ? 2.5 : 1.5);
+    const wTodo = wDone + 1.5;
+    const draw=(want,color,width)=>{
+      g.strokeStyle=color; g.lineWidth=width; g.lineCap="round"; g.beginPath();
+      for(let i=0;i<roads.n;i++){
+        if((a[i]?1:0)!==want) continue;
+        const la1=roads.lat1[i], ln1=roads.lng1[i], la2=roads.lat2[i], ln2=roads.lng2[i];
+        if(Math.max(la1,la2)<s||Math.min(la1,la2)>n||Math.max(ln1,ln2)<w||Math.min(ln1,ln2)>e) continue;
+        if(!inHome(i)) continue;
+        const p=map.latLngToContainerPoint(L.latLng(la1,ln1));
+        const q=map.latLngToContainerPoint(L.latLng(la2,ln2));
+        g.moveTo(p.x,p.y); g.lineTo(q.x,q.y);
+      }
+      g.stroke();
+    };
+    draw(1, "rgba(108,122,148,0.70)", wDone);   // 配布済み
+    draw(0, "#e34948", wTodo);                  // 未配布
+    if(pref.home){
+      const h=map.latLngToContainerPoint(L.latLng(pref.home[0],pref.home[1]));
+      const edge=map.latLngToContainerPoint(L.latLng(pref.home[0],
+        pref.home[1]+pref.radius/(111320*Math.cos(pref.home[0]*Math.PI/180))));
+      g.beginPath(); g.arc(h.x,h.y,Math.abs(edge.x-h.x),0,Math.PI*2);
+      g.strokeStyle="rgba(24,36,64,0.5)"; g.lineWidth=2; g.setLineDash([7,6]); g.stroke(); g.setLineDash([]);
+    }
+  }
+});
+const roadLayer = new RoadLayer();
+
+function syncMiss(){
+  const wantFog  = pref.miss==="area" && pref.home;
+  const wantRoad = pref.miss==="road" && roads;
+  if(wantFog){ if(!map.hasLayer(fog)) fog.addTo(map); else fog.redraw(); }
+  else if(map.hasLayer(fog)) map.removeLayer(fog);
+  if(wantRoad){ if(!map.hasLayer(roadLayer)) roadLayer.addTo(map); else roadLayer.redraw(); }
+  else if(map.hasLayer(roadLayer)) map.removeLayer(roadLayer);
+}
+
+/* ---- 取り込み ---- */
+function bboxOfHome(){
+  const [lat,lng]=pref.home, r=pref.radius;
+  const dLat=r/111320, dLng=r/(111320*Math.cos(lat*Math.PI/180));
+  return [+(lat-dLat).toFixed(6), +(lng-dLng).toFixed(6),
+          +(lat+dLat).toFixed(6), +(lng+dLng).toFixed(6)];
+}
+const OVERPASS = "https://overpass-api.de/api/interpreter";
+async function overpass(q){
+  const res = await fetch(OVERPASS, {method:"POST", body:"data="+encodeURIComponent(q),
+    headers:{"Content-Type":"application/x-www-form-urlencoded"}});
+  if(!res.ok) throw new Error("Overpass HTTP "+res.status);
+  return res.json();
+}
+async function fetchRoads(){
+  if(!pref.home){ toast("先に「商圏の中心」を設定してください"); return; }
+  const bb = bboxOfHome().join(",");
+  const btn = document.getElementById("roadFetch");
+  btn.disabled = true; btn.textContent = "取得中…";
+  try{
+    toast("道路を取得しています…");
+    const w = await overpass(`[out:json][timeout:120];way["highway"](${bb});out geom;`);
+    btn.textContent = "建物を取得中…";
+    toast("建物を取得しています…");
+    let b = null;
+    try{ b = await overpass(`[out:json][timeout:120];(way["building"](${bb});relation["building"](${bb}););out center;`); }
+    catch(e){ toast("建物は取れませんでした（道路だけで続けます）"); }
+    btn.textContent = "計算中…";
+    await new Promise(r=>setTimeout(r,30));
+    installRoads(buildRoads(w, b, bboxOfHome()));
+  }catch(e){
+    toast("取得できませんでした。下の「ファイルから読み込む」をお使いください");
+  }finally{
+    btn.disabled=false; renderRoadRow();
+  }
+}
+function installRoads(packed){
+  if(!saveRoads(packed)) return;
+  roads = hydrate(packed);
+  covCache = null; dataVer++;
+  if(pref.miss==="none") pref.miss = "road";
+  savePref();
+  syncMiss(); renderRoadRow(); renderSummary(); syncCredit();
+  toast(`道路データを取り込みました（${roads.n.toLocaleString()}区間 / ${roads.totalKm.toFixed(1)}km）`);
+}
+let pending = {};
+function importRoadFile(files){
+  const jobs = [...files].map(f=>new Promise(res=>{
+    const r=new FileReader();
+    r.onload=()=>{ try{ res({name:f.name, json:JSON.parse(r.result)}); }catch(e){ res(null); } };
+    r.readAsText(f);
+  }));
+  Promise.all(jobs).then(list=>{
+    list = list.filter(Boolean);
+    if(!list.length){ toast("読み込めませんでした"); return; }
+    list.forEach(x=>{
+      const ways = normalizeWays(x.json);
+      if(ways.length) pending.roads = x.json; else pending.buildings = x.json;
+    });
+    if(!pending.roads){ toast("道路のファイルも選んでください（roads の方）"); return; }
+    try{
+      const bb = pref.home ? bboxOfHome() : bboxOfJson(pending.roads);
+      installRoads(buildRoads(pending.roads, pending.buildings, bb));
+      pending = {};
+    }catch(e){ toast("処理できませんでした: "+e.message); }
+  });
+}
+function bboxOfJson(json){
+  let s=90,w=180,n=-90,e=-180;
+  normalizeWays(json).forEach(x=>x.coords.forEach(p=>{
+    if(p[1]<s)s=p[1]; if(p[1]>n)n=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0]; }));
+  return [s,w,n,e];
+}
+function clearRoads(){
+  if(!confirm("取り込んだ道路データを削除しますか？（配布の記録は消えません）")) return;
+  localStorage.removeItem(RKEY); roads=null; covCache=null; dataVer++;
+  if(pref.miss==="road") pref.miss="none";
+  savePref(); syncMiss(); renderRoadRow(); renderSummary(); syncCredit();
+}
+function renderRoadRow(){
+  const el=document.getElementById("roadState");
+  if(!roads){ el.textContent = "未取得（取り込むと道路単位で判定できます）"; }
+  else{
+    const st = roadStats(pref.only ? db.current : null);
+    el.textContent = `${roads.n.toLocaleString()}区間 / ${roads.totalKm.toFixed(1)}km`
+      + (st ? `　商圏内 ${st.km.toFixed(1)}km のうち ${st.pct.toFixed(0)}% 配布済み` : "")
+      + `（${new Date(roads.ts).toLocaleDateString("ja-JP")}取得）`;
+  }
+  document.getElementById("roadClear").style.display = roads ? "" : "none";
+  document.querySelectorAll("#missbar button").forEach(b=>{
+    b.classList.toggle("sel", b.dataset.miss===pref.miss);
+    b.disabled = (b.dataset.miss==="road" && !roads);
+    b.style.opacity = b.disabled ? .45 : 1;
+  });
+}
+function syncCredit(){
+  const b=BASES[pref.base]||BASES.pale;
+  document.getElementById("creditTxt").innerHTML =
+    "出典 " + b.attr + (roads ? " ・ 道路 &copy; OpenStreetMap contributors (ODbL)" : "");
+}
+
+const casingGroup = L.layerGroup().addTo(map);   // 白い縁取り（重なっても道が読める）
+const histGroup   = L.layerGroup().addTo(map);
+const liveLine    = L.polyline([], {weight:7, opacity:.95, lineCap:"round", lineJoin:"round"}).addTo(map);
+const drawLine    = L.polyline([], {weight:7, opacity:.85, lineCap:"round", lineJoin:"round"}).addTo(map);
+let meMarker = null, meCircle = null;
+
+function visible(f){ return !pref.only || f === db.current; }
+
+function drawHistory(){
+  casingGroup.clearLayers(); histGroup.clearLayers();
+  const w = strokeWeight();
+  if(pref.hist && pref.miss!=="road"){    // 道路モードでは色分けと二重になるので出さない
+    const n = db.sessions.length;
+    db.sessions.forEach((s,i)=>{
+      if(!s.pts || s.pts.length < 2 || !visible(s.f)) return;
+      const t = n>1 ? i/(n-1) : 1;
+      L.polyline(s.pts, {color:"#fff", weight:w+4, opacity:.5, lineCap:"round", lineJoin:"round"}).addTo(casingGroup);
+      L.polyline(s.pts, {color:fColor(s.f), weight:w, opacity:0.55+0.35*t, dashArray:dashOf(fColor(s.f)),
+                         lineCap:"round", lineJoin:"round"}).addTo(histGroup);
+    });
+    db.marks.forEach(m=>{
+      if(!m.pts || m.pts.length < 2 || !visible(m.f)) return;
+      const c = fColor(m.f);
+      if(m.type === "area"){
+        L.polygon(m.pts, {color:c, weight:2.5, opacity:.85, dashArray:dashOf(c),
+                          fillColor:c, fillOpacity:.16}).addTo(histGroup);
+      }else{
+        L.polyline(m.pts, {color:"#fff", weight:w+4, opacity:.5, lineCap:"round", lineJoin:"round"}).addTo(casingGroup);
+        L.polyline(m.pts, {color:c, weight:w, opacity:.8, dashArray:dashOf(c),
+                           lineCap:"round", lineJoin:"round"}).addTo(histGroup);
+      }
+    });
+  }
+  const c = curF().color;
+  liveLine.setStyle({weight:w, color:c});
+  drawLine.setStyle({weight:w, color:c});
+  if(baseLayer) baseLayer.bringToBack();
+  syncMiss();
+}
+map.on("zoomend", ()=>{ if(pref.metric) drawHistory(); });
+
+/* =========================================================
+   GPS記録
+   ========================================================= */
+let tracking=false, watchId=null, cur=null, lastPt=null, wakeLock=null, tickTimer=null;
+let lastAt = 0, lastBrg = null, lastFix = null;   // 最後に記録した時刻・進行方向・最新の測位
+const MIN_D = 4;                          // これ未満の動きは止まっているとみなす
+const TURN_DEG = 50;                      // これ以上向きが変わったら曲がり角として残す
+const R = 6371000;
+function dist(a,b){
+  const dLat=(b[0]-a[0])*Math.PI/180, dLng=(b[1]-a[1])*Math.PI/180;
+  const la1=a[0]*Math.PI/180, la2=b[0]*Math.PI/180;
+  const h=Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+}
+function pathLen(pts){ let d=0; for(let i=1;i<pts.length;i++) d+=dist(pts[i-1],pts[i]); return d; }
+function bearing(a,b){
+  const la1=a[0]*Math.PI/180, la2=b[0]*Math.PI/180, dl=(b[1]-a[1])*Math.PI/180;
+  const y=Math.sin(dl)*Math.cos(la2);
+  const x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dl);
+  return (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+}
+function turnAngle(a,b){ return Math.abs(((a-b+540)%360)-180); }
+function setGps(s){
+  document.getElementById("gpsdot").style.background =
+    ({off:"#bbb", wait:"#d97706", ok:"#4ade80", bad:"#dc2626"}[s]) || "#bbb";
+}
+async function acquireWakeLock(){
+  if(!pref.wake) return;
+  try{
+    if("wakeLock" in navigator){
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", ()=>{ wakeLock=null; });
+      document.getElementById("wlState").textContent = "対応：GPS記録中は画面が消えません";
+    }else{
+      document.getElementById("wlState").textContent = "この端末は非対応（自動ロックを切ってください）";
+    }
+  }catch(e){ document.getElementById("wlState").textContent = "取得できませんでした"; }
+}
+function releaseWakeLock(){ if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; } }
+
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", ()=>{
+  if(!tracking) return;
+  if(document.visibilityState === "hidden"){ hiddenAt = Date.now(); return; }
+  acquireWakeLock();
+  if(watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:0, timeout:30000});
+  const gap = Date.now() - hiddenAt;
+  if(hiddenAt && gap > 8000){
+    splitSession();
+    const s = Math.round(gap/1000);
+    toast("裏に回っていた間（"+(s<60 ? s+"秒" : Math.round(s/60)+"分")+"）は記録が止まっています");
+  }
+  hiddenAt = 0;
+});
+function newSession(){ return {id:uid(), start:Date.now(), end:null, count:0, pts:[], f:db.current}; }
+/* 間隔を空けて記録していると、止めた瞬間の位置が最大で「間隔ぶん」抜ける。
+   終了・中断のたびに最後の測位を書き足して、線を実際に歩いた所まで伸ばす。 */
+function flushTail(){
+  if(!cur || !lastFix) return;
+  if(lastPt){
+    const d = dist(lastPt, lastFix);
+    if(d < MIN_D || d > 200) return;
+  }
+  cur.pts.push(lastFix); lastPt = lastFix; lastAt = Date.now();
+}
+
+function splitSession(){
+  flushTail();
+  if(cur && (cur.pts.length > 1 || cur.count > 0)){
+    cur.end = Date.now(); db.sessions.push(cur); saveDB(); drawHistory();
+  }
+  cur = newSession(); lastPt = null; lastAt = 0; lastBrg = null; lastFix = null; liveLine.setLatLngs([]);
+}
+function onPos(p){
+  const {latitude:lat, longitude:lng, accuracy:acc} = p.coords;
+  const here = [ +lat.toFixed(6), +lng.toFixed(6) ];
+  if(!meMarker){
+    meMarker = L.circleMarker(here, {radius:8, color:"#fff", weight:3, fillColor:"#1668dc", fillOpacity:1}).addTo(map);
+    meCircle = L.circle(here, {radius:acc, color:"#1668dc", weight:1, fillColor:"#1668dc", fillOpacity:.10}).addTo(map);
+    if(follow) map.setView(here, 17);
+  }else{
+    meMarker.setLatLng(here); meCircle.setLatLng(here).setRadius(acc);
+  }
+  setGps(acc<=25 ? "ok" : "wait");
+  // 毎回パンすると描画し続けて電池を食うので、画面の中央から外れたときだけ寄せる
+  if(follow && mode==="gps"){
+    const q = map.latLngToContainerPoint(here), sz = map.getSize();
+    if(q.x < sz.x*0.25 || q.x > sz.x*0.75 || q.y < sz.y*0.22 || q.y > sz.y*0.78)
+      map.panTo(here, {animate:true, duration:.6});
+  }
+  if(!tracking) return;
+  if(acc > 40) return;
+
+  const now = Date.now();
+  lastFix = here;
+  if(lastPt){
+    const d  = dist(lastPt, here);
+    const dt = (now - lastAt) / 1000;
+    if(d > 200){ lastPt = here; lastAt = now; lastBrg = null; return; }   // 飛んだ点
+    let take = (dt >= pref.interval && d >= MIN_D);
+    // 間隔を待つと角が丸まるので、大きく向きが変わったときは早めに1点残す
+    if(!take && d >= 8 && dt >= 2.5 && lastBrg !== null
+       && turnAngle(bearing(lastPt, here), lastBrg) > TURN_DEG) take = true;
+    if(!take) return;
+    lastBrg = bearing(lastPt, here);
+  }
+  cur.pts.push(here); lastPt = here; lastAt = now;
+  liveLine.addLatLng(here); updateHud();
+  if(map.hasLayer(fog)) fog.redraw();
+}
+function onErr(e){ setGps("bad"); if(e.code===1) toast("位置情報が許可されていません"); }
+
+function start(){
+  if(!("geolocation" in navigator)){ toast("この端末では位置情報が使えません"); return; }
+  tracking = true; cur = newSession(); lastPt = null; lastAt = 0; lastBrg = null; lastFix = null;
+  liveLine.setLatLngs([]).setStyle({color:curF().color}); setGps("wait"); follow = true;
+  // maximumAge:0 …… 記録の1点目に古いキャッシュ位置が入って線が飛ぶのを防ぐ
+  watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:0, timeout:30000});
+  acquireWakeLock();
+  document.getElementById("startBtn").classList.add("on");
+  document.getElementById("startLabel").textContent = "記録ストップ";
+  tickTimer = setInterval(updateHud, 5000);
+  updateHud(); toast("「"+curF().name+"」で記録を開始しました");
+}
+function stop(){
+  tracking = false;
+  if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  clearInterval(tickTimer); tickTimer=null;
+  releaseWakeLock(); setGps("off");
+  flushTail();
+  if(cur && (cur.pts.length>1 || cur.count>0)){
+    cur.end = Date.now(); db.sessions.push(cur); saveDB(); drawHistory();
+    toast("保存しました（"+cur.count+"枚 / "+(pathLen(cur.pts)/1000).toFixed(2)+"km）");
+  }else{ toast("記録なしで終了しました"); }
+  liveLine.setLatLngs([]); cur = null;
+  document.getElementById("startBtn").classList.remove("on");
+  document.getElementById("startLabel").textContent = "記録スタート";
+  updateHud();
+}
+
+/* =========================================================
+   手描き
+   ========================================================= */
+let mode = "gps", pts = null, lastScreen = null, drawingTouchId = null;
+function targetDay(){ return document.getElementById("dayPick").value || today(); }
+
+function setMode(m){
+  if(m !== "gps" && tracking) stop();
+  mode = m; pref.mode = m; savePref();
+  document.body.className = "mode-" + m;
+  document.querySelectorAll("#modebar button").forEach(b=> b.classList.toggle("sel", b.dataset.mode === m));
+  document.getElementById("hintTop").textContent = {
+    gps:"", draw:"1本指=なぞる ／ 2本指=地図を動かす",
+    area:"1本指=囲む ／ 2本指=地図を動かす", erase:"消したい線・面をタップ"
+  }[m];
+  if(m==="draw" || m==="area"){ map.dragging.disable(); follow = false; }
+  else { map.dragging.enable(); }
+  cancelStroke(); updateHud();
+}
+function cancelStroke(){ pts=null; lastScreen=null; drawingTouchId=null; drawLine.setLatLngs([]); }
+function toLatLng(cx, cy){
+  const r = map.getContainer().getBoundingClientRect();
+  const ll = map.containerPointToLatLng(L.point(cx - r.left, cy - r.top));
+  return [ +ll.lat.toFixed(6), +ll.lng.toFixed(6) ];
+}
+function beginStroke(x,y){
+  pts = [toLatLng(x,y)]; lastScreen = [x,y];
+  drawLine.setStyle({weight:strokeWeight(), color:curF().color,
+                     dashArray: mode==="area" ? "8 8" : dashOf(curF().color)});
+  drawLine.setLatLngs(pts);
+}
+function extendStroke(x,y){
+  if(!pts) return;
+  if(lastScreen && Math.hypot(x-lastScreen[0], y-lastScreen[1]) < 7) return;
+  pts.push(toLatLng(x,y)); lastScreen = [x,y]; drawLine.setLatLngs(pts);
+}
+function endStroke(){
+  if(!pts || pts.length < 2){ cancelStroke(); return; }
+  const m = {id:uid(), ts:Date.now(), day:targetDay(), f:db.current,
+             type: mode==="area" ? "area" : "line", pts:pts};
+  db.marks.push(m); saveDB(); drawHistory();
+  const len = pathLen(pts);
+  toast((m.type==="area" ? "囲みを追加" :
+        "なぞりを追加（"+(len>=1000 ? (len/1000).toFixed(2)+"km" : Math.round(len)+"m")+"）")
+        + "／" + curF().name + " " + m.day);
+  cancelStroke(); updateHud();
+}
+const cont = map.getContainer();
+cont.addEventListener("touchstart", e=>{
+  if(mode!=="draw" && mode!=="area") return;
+  if(e.touches.length > 1){ cancelStroke(); return; }
+  const t = e.touches[0]; drawingTouchId = t.identifier;
+  beginStroke(t.clientX, t.clientY); e.preventDefault();
+}, {passive:false});
+cont.addEventListener("touchmove", e=>{
+  if(!pts) return;
+  if(e.touches.length > 1){ cancelStroke(); return; }
+  const t = [...e.touches].find(x=>x.identifier===drawingTouchId) || e.touches[0];
+  extendStroke(t.clientX, t.clientY); e.preventDefault();
+}, {passive:false});
+cont.addEventListener("touchend", e=>{ if(pts){ endStroke(); e.preventDefault(); } }, {passive:false});
+cont.addEventListener("touchcancel", cancelStroke);
+
+let mouseDown = false;
+cont.addEventListener("mousedown", e=>{
+  if(mode!=="draw" && mode!=="area") return;
+  mouseDown = true; beginStroke(e.clientX, e.clientY); e.preventDefault();
+});
+cont.addEventListener("mousemove", e=>{ if(mouseDown) extendStroke(e.clientX, e.clientY); });
+window.addEventListener("mouseup", ()=>{ if(mouseDown){ mouseDown=false; endStroke(); } });
+
+function inPolygon(pt, poly){
+  let inside = false;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+    if(((yi>pt.y)!==(yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+map.on("click", e=>{
+  if(mode !== "erase") return;
+  const p = map.latLngToContainerPoint(e.latlng);
+  const tol = Math.max(18, strokeWeight());
+  let best=null, bestD=Infinity;
+  db.marks.forEach(m=>{
+    if(!visible(m.f)) return;
+    const cp = m.pts.map(q => map.latLngToContainerPoint(L.latLng(q[0], q[1])));
+    if(m.type==="area" && cp.length>2 && inPolygon(p, cp)){ if(0<bestD){ best=m; bestD=0; } return; }
+    for(let i=1;i<cp.length;i++){
+      const d = L.LineUtil.pointToSegmentDistance(p, cp[i-1], cp[i]);
+      if(d < bestD){ bestD = d; best = m; }
+    }
+  });
+  if(best && bestD <= tol){
+    db.marks = db.marks.filter(m=>m.id !== best.id);
+    saveDB(); drawHistory(); updateHud(); toast("消しました（"+fName(best.f)+"）");
+  }else toast("この近くに手描きの記録はありません");
+});
+document.getElementById("undoBtn").onclick = ()=>{
+  const mine = db.marks.filter(m=>m.f===db.current);
+  if(!mine.length){ toast("「"+curF().name+"」に戻せる手描きがありません"); return; }
+  let latest = mine[0]; mine.forEach(m=>{ if(m.ts > latest.ts) latest = m; });
+  db.marks = db.marks.filter(m=>m.id !== latest.id);
+  saveDB(); drawHistory(); updateHud(); toast("1つ戻しました");
+};
+document.querySelectorAll("#modebar button").forEach(b=> b.onclick = ()=> setMode(b.dataset.mode));
+
+/* =========================================================
+   集計
+   ========================================================= */
+function statsFor(day, f){                      // f=null なら全部の版
+  let count=0, dm=0, ms=0, marks=0, mkm=0;
+  db.flyers.forEach(fl=>{
+    if(f!=null && fl.id!==f) return;
+    count += (db.tally[fl.id]||{})[day] || 0;
+  });
+  db.sessions.forEach(s=>{
+    if(dayOf(s.start)!==day || (f!=null && s.f!==f)) return;
+    count += s.count||0; dm += pathLen(s.pts); ms += (s.end||s.start)-s.start;
+  });
+  if(cur && dayOf(cur.start)===day && (f==null || cur.f===f)){
+    count += cur.count; dm += pathLen(cur.pts); ms += Date.now()-cur.start;
+  }
+  db.marks.forEach(m=>{
+    if(m.day!==day || (f!=null && m.f!==f)) return;
+    marks++; if(m.type==="line") mkm += pathLen(m.pts)/1000;
+  });
+  return {count, km:dm/1000, ms, marks, mkm};
+}
+function flyerTotals(f){
+  let count=0, km=0, marks=0; const days=new Set();
+  Object.entries(db.tally[f]||{}).forEach(([d,n])=>{ if(n){ count+=n; days.add(d); } });
+  db.sessions.forEach(s=>{ if(s.f===f){ count+=s.count||0; km+=pathLen(s.pts)/1000; days.add(dayOf(s.start)); } });
+  if(cur && cur.f===f){ count+=cur.count; km+=pathLen(cur.pts)/1000; days.add(dayOf(cur.start)); }
+  db.marks.forEach(m=>{ if(m.f===f){ marks++; if(m.type==="line") km+=pathLen(m.pts)/1000; days.add(m.day); } });
+  const sorted=[...days].sort();
+  return {count, km, marks, days:days.size, from:sorted[0]||null, to:sorted[sorted.length-1]||null};
+}
+function updateHud(){
+  syncFlyerChip();
+  if(mode !== "gps") return;                  // ログ入力モードでは数字を出さない
+  const day = today(), f = pref.only ? db.current : null;
+  const t = statsFor(day, f);
+  document.getElementById("sCount").textContent = t.count;
+  document.getElementById("sDist").textContent  = t.km.toFixed(2);
+  const min = Math.floor(t.ms/60000);
+  document.getElementById("sTime").textContent  = Math.floor(min/60)+":"+pad2(min%60);
+  const h = t.ms/3600000;
+  document.getElementById("sPace").textContent  = (h>0.03 && t.count>0) ? Math.round(t.count/h) : "–";
+  document.getElementById("countBtn").firstChild.nodeValue =
+    statsFor(day, db.current).count;                       // ボタンは「選択中の版」の今日の枚数
+  document.getElementById("lCount").textContent = pref.only ? "この版の枚数" : "枚数（全版）";
+}
+document.getElementById("countBtn").onclick = ()=>{
+  const d = today();
+  if(mode === "gps"){
+    if(!cur){ toast("先に「記録スタート」を押してください"); return; }
+    cur.count++;
+  }else{
+    if(!db.tally[db.current]) db.tally[db.current] = {};
+    db.tally[db.current][d] = (db.tally[db.current][d]||0) + 1; saveDB();
+  }
+  const b = document.getElementById("countBtn");
+  b.classList.remove("flash"); void b.offsetWidth; b.classList.add("flash");
+  updateHud();
+};
+document.getElementById("minusBtn").onclick = ()=>{
+  const d = today(), t = db.tally[db.current] || (db.tally[db.current]={});
+  if(mode==="gps" && cur && cur.count > 0){ cur.count--; updateHud(); return; }
+  if(t[d] > 0){ t[d]--; saveDB(); updateHud(); return; }
+  for(let i=db.sessions.length-1;i>=0;i--){
+    const s = db.sessions[i];
+    if(s.f===db.current && dayOf(s.start)===d && s.count>0){ s.count--; saveDB(); updateHud(); return; }
+  }
+};
+
+/* =========================================================
+   チラシの版：UI
+   ========================================================= */
+function syncFlyerChip(){
+  const f = curF();
+  document.getElementById("flyerSw").style.background = f.color;
+  document.getElementById("countBtn").style.borderColor = f.color;
+  document.getElementById("flyerName").textContent = f.name;
+  const fc = document.getElementById("filterChip");
+  fc.textContent = pref.only ? "この版だけ" : "全部表示";
+  fc.classList.toggle("on", pref.only);
+}
+document.getElementById("filterChip").onclick = ()=>{
+  pref.only = !pref.only; savePref(); drawHistory(); updateHud(); syncMiss();
+  toast(pref.only ? "「"+curF().name+"」だけを表示しています" : "すべての版を表示しています");
+};
+
+const flyerPanel = document.getElementById("flyerPanel");
+document.getElementById("flyerChip").onclick = ()=>{ renderFlyers(); flyerPanel.classList.add("show"); };
+document.getElementById("closeFlyer").onclick = ()=>{ flyerPanel.classList.remove("show"); closeEdit(); };
+
+let editingId = null, editColor = null;
+
+function renderFlyers(){
+  const el = document.getElementById("flyerList");
+  el.innerHTML = db.flyers.map(f=>{
+    const t = flyerTotals(f.id);
+    const range = t.from ? (t.from===t.to ? t.from : t.from+" 〜 "+t.to) : "記録なし";
+    return `<div class="row">
+      <span class="swatch" style="background:${f.color}"></span>
+      <div class="g"><b>${esc(f.name)}${f.id===db.current ? " ・使用中" : ""}</b>
+        <em>${t.count}枚 ・ ${t.km.toFixed(2)}km ・ ${range}</em></div>
+      ${f.id===db.current ? "" : `<button class="mini go" data-use="${f.id}">使う</button>`}
+      <button class="mini" data-edit="${f.id}">編集</button>
+    </div>`;
+  }).join("");
+  el.querySelectorAll("[data-use]").forEach(b=> b.onclick = ()=>{
+    db.current = +b.dataset.use; saveDB();
+    drawHistory(); updateHud(); renderFlyers(); closeEdit();
+    toast("「"+curF().name+"」に切り替えました");
+  });
+  el.querySelectorAll("[data-edit]").forEach(b=> b.onclick = ()=> openEdit(+b.dataset.edit));
+}
+const esc = s => String(s).replace(/[<>&"]/g, c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
+
+function openEdit(id){
+  const f = flyer(id);
+  editingId = id; editColor = f.color;
+  document.getElementById("fName").value = f.name;
+  renderSwatches();
+  document.getElementById("fDelete").style.display = db.flyers.length > 1 ? "block" : "none";
+  document.getElementById("fEdit").classList.add("show");
+  document.getElementById("fEdit").scrollIntoView({behavior:"smooth", block:"center"});
+}
+function closeEdit(){ editingId=null; document.getElementById("fEdit").classList.remove("show"); }
+function renderSwatches(){
+  document.getElementById("fColors").innerHTML = PALETTE.map(p=>
+    `<button data-c="${p.hex}" class="${p.hex===editColor?"sel":""}" style="background:${p.hex}">${p.name}</button>`
+  ).join("");
+  document.querySelectorAll("#fColors button").forEach(b=> b.onclick = ()=>{
+    editColor = b.dataset.c; renderSwatches();
+  });
+}
+document.getElementById("addFlyer").onclick = ()=>{
+  const used = new Set(db.flyers.map(f=>f.color));
+  const free = PALETTE.find(p=>!used.has(p.hex)) || PALETTE[db.flyers.length % PALETTE.length];
+  const f = {id:uid(), name:"チラシ "+(db.flyers.length+1), color:free.hex, created:Date.now()};
+  db.flyers.push(f); db.tally[f.id] = {}; db.current = f.id; saveDB();
+  drawHistory(); updateHud(); renderFlyers(); openEdit(f.id);
+  if(db.flyers.length > PALETTE.length) toast("色が足りないので使い回しています。「この版だけ」で見分けてください");
+};
+document.getElementById("fSave").onclick = ()=>{
+  const f = flyer(editingId); if(!f) return;
+  const nm = document.getElementById("fName").value.trim();
+  f.name = nm || f.name; f.color = editColor; saveDB();
+  drawHistory(); updateHud(); renderFlyers(); closeEdit(); toast("保存しました");
+};
+document.getElementById("fCancel").onclick = closeEdit;
+document.getElementById("fDelete").onclick = ()=>{
+  const f = flyer(editingId); if(!f || db.flyers.length<2) return;
+  const t = flyerTotals(f.id);
+  const n = db.sessions.filter(s=>s.f===f.id).length + db.marks.filter(m=>m.f===f.id).length;
+  const msg = n ? `「${f.name}」の記録（${n}件・${t.count}枚）も一緒に削除します。よろしいですか？`
+                : `「${f.name}」を削除しますか？`;
+  if(!confirm(msg)) return;
+  db.sessions = db.sessions.filter(s=>s.f!==f.id);
+  db.marks    = db.marks.filter(m=>m.f!==f.id);
+  delete db.tally[f.id];
+  db.flyers   = db.flyers.filter(x=>x.id!==f.id);
+  if(db.current === f.id) db.current = db.flyers[0].id;
+  saveDB(); drawHistory(); updateHud(); renderFlyers(); closeEdit(); toast("削除しました");
+};
+
+/* =========================================================
+   その他の操作
+   ========================================================= */
+let follow = true;
+map.on("dragstart", ()=>{ follow = false; });
+document.getElementById("startBtn").onclick = ()=> tracking ? stop() : start();
+document.querySelectorAll('[data-act="loc"]').forEach(b=> b.onclick = ()=>{
+  if(mode==="gps") follow = true;
+  if(meMarker){ map.setView(meMarker.getLatLng(), 17); return; }
+  navigator.geolocation.getCurrentPosition(
+    p=>{ map.setView([p.coords.latitude,p.coords.longitude],17); onPos(p); },
+    ()=>toast("現在地を取得できません"), {enableHighAccuracy:true, timeout:15000});
+});
+const dayPick = document.getElementById("dayPick");
+dayPick.value = today(); dayPick.max = today();
+dayPick.onchange = ()=>{ toast(dayPick.value+" として記録します"); };
+
+/* ---- メニュー ---- */
+const panel = document.getElementById("panel");
+document.querySelectorAll('[data-act="menu"]').forEach(b=>
+  b.onclick = ()=>{ renderHist(); renderSummary(); renderRoadRow(); checkPersist(false); showUsage();
+                    panel.classList.add("show"); });
+document.getElementById("closePanel").onclick = ()=> panel.classList.remove("show");
+
+document.getElementById("addDay").value = today();
+document.getElementById("addDay").onchange = e=>{
+  const d = e.target.value; if(!d) return;
+  if(!extraDays.includes(d)) extraDays.push(d);
+  renderHist();
+  const row = document.querySelector('.cin[data-day="'+d+'"]');
+  if(row){ row.scrollIntoView({behavior:"smooth", block:"center"}); row.focus(); }
+  toast(d+" の行を追加しました");
+};
+
+const baseSel = document.getElementById("baseSel");
+baseSel.value = pref.base;
+baseSel.onchange = ()=> setBase(baseSel.value);
+
+const RADII = [500,1000,1500,2000];
+function renderRad(){
+  document.getElementById("radbar").innerHTML = RADII.map(v=>
+    `<button data-r="${v}" class="${v===pref.radius?"sel":""}">${v<1000 ? v+"m" : (v/1000)+"km"}</button>`).join("");
+  document.querySelectorAll("#radbar button").forEach(b=> b.onclick = ()=>{
+    pref.radius = +b.dataset.r; savePref(); renderRad(); syncMiss();
+  });
+}
+function syncHome(){
+  const h = pref.home;
+  document.getElementById("homeState").textContent =
+    h ? h[0].toFixed(5)+", "+h[1].toFixed(5) : "未設定（設定すると使えます）";
+  renderRoadRow();
+}
+function setHome(ll){
+  pref.home = [ +ll[0].toFixed(6), +ll[1].toFixed(6) ];
+  if(pref.miss==="none") pref.miss = roads ? "road" : "area";
+  savePref(); syncHome(); syncMiss();
+  toast("商圏の中心を設定しました");
+}
+document.querySelectorAll("#missbar button").forEach(b=> b.onclick = ()=>{
+  const m=b.dataset.miss;
+  if(m==="area" && !pref.home){ toast("先に「商圏の中心」を設定してください"); return; }
+  if(m==="road" && !roads){ toast("先に道路データを取り込んでください"); return; }
+  pref.miss=m; savePref(); renderRoadRow(); syncMiss();
+});
+document.getElementById("roadFetch").onclick  = fetchRoads;
+document.getElementById("roadImport").onclick = ()=> document.getElementById("roadFile").click();
+document.getElementById("roadFile").onchange  = e=>{ importRoadFile(e.target.files); e.target.value=""; };
+document.getElementById("roadClear").onclick  = clearRoads;
+document.getElementById("setHomeMap").onclick = ()=>{
+  const c = map.getCenter(); setHome([c.lat, c.lng]);
+  panel.classList.remove("show");
+};
+document.getElementById("setHomeGps").onclick = ()=>{
+  if(meMarker){ const c = meMarker.getLatLng(); setHome([c.lat, c.lng]); return; }
+  navigator.geolocation.getCurrentPosition(
+    p=>setHome([p.coords.latitude, p.coords.longitude]),
+    ()=>toast("現在地を取得できません"), {enableHighAccuracy:true, timeout:15000});
+};
+
+const INTERVALS = [3,5,10,20];
+function renderIv(){
+  document.getElementById("ivbar").innerHTML = INTERVALS.map(v=>
+    `<button data-iv="${v}" class="${v===pref.interval?"sel":""}">${v}秒</button>`).join("");
+  document.querySelectorAll("#ivbar button").forEach(b=> b.onclick = ()=>{
+    pref.interval = +b.dataset.iv; savePref(); renderIv();
+    toast(pref.interval+"秒ごとに記録します");
+  });
+}
+function tg(id,on){ const b=document.getElementById(id); b.textContent = on?"ON":"OFF";
+                    b.style.background = on ? "#dff0e0" : "#eef1f6"; }
+function syncToggles(){ tg("tgHist",pref.hist); tg("tgMetric",pref.metric); tg("tgWake",pref.wake); }
+renderIv(); renderRad(); roads = loadRoads(); syncHome(); syncCredit();
+document.getElementById("tgHist").onclick   = ()=>{ pref.hist=!pref.hist;     savePref(); syncToggles(); drawHistory(); };
+document.getElementById("tgMetric").onclick = ()=>{ pref.metric=!pref.metric; savePref(); syncToggles(); drawHistory(); };
+document.getElementById("tgWake").onclick   = ()=>{
+  pref.wake=!pref.wake; savePref(); syncToggles();
+  if(pref.wake && tracking) acquireWakeLock(); else releaseWakeLock();
+};
+syncToggles();
+if(!("wakeLock" in navigator))
+  document.getElementById("wlState").textContent = "この端末は非対応（設定→画面表示と明るさ→自動ロック＝なし に）";
+
+function renderSummary(){
+  const hasR = !!roads;
+  const rows = db.flyers.map(f=>{
+    const t = flyerTotals(f.id);
+    const range = t.from ? (t.from===t.to ? t.from.slice(5) : t.from.slice(5)+"〜"+t.to.slice(5)) : "—";
+    const rs = hasR ? roadStats(f.id) : null;
+    return `<tr>
+      <td><span class="swatch" style="background:${f.color};display:inline-block;vertical-align:-2px;margin-right:6px;"></span>${esc(f.name)}</td>
+      <td class="r"><b>${t.count}</b></td><td class="r">${t.km.toFixed(1)}</td>
+      ${hasR ? `<td class="r"><b>${rs.pct.toFixed(0)}%</b></td>` : ""}
+      <td class="r">${t.days}</td><td class="r" style="color:#5a6478">${range}</td></tr>`;
+  }).join("");
+  const all = db.flyers.reduce((a,f)=>a+flyerTotals(f.id).count, 0);
+  const allR = hasR ? roadStats(null) : null;
+  document.getElementById("flyerSummary").innerHTML =
+    `<table class="tbl"><thead><tr><th>チラシの版</th><th class="r">枚数</th><th class="r">km</th>
+     ${hasR ? '<th class="r">配布率</th>' : ""}
+     <th class="r">日数</th><th class="r">期間</th></tr></thead><tbody>${rows}
+     <tr><td><b>合計</b></td><td class="r"><b>${all}</b></td><td></td>
+     ${hasR ? `<td class="r"><b>${allR.pct.toFixed(0)}%</b></td>` : ""}<td></td><td></td></tr>
+     </tbody></table>`
+    + (hasR ? `<div style="font-size:12px;color:var(--ink-2);margin-top:8px;">
+        商圏内の配布対象 ${allR.km.toFixed(1)}km（${allR.n.toLocaleString()}区間）のうち、
+        <b>未配布 ${(allR.km-allR.doneKm).toFixed(1)}km（${(allR.n-allR.done).toLocaleString()}区間）</b></div>` : "");
+}
+/* その日・その版の枚数を「合計がnになるように」書き換える。
+   GPS記録中にタップした分は残し、足りない/余る分を手入力ぶんで調整する。 */
+function sessionCount(day, fid){
+  let n = 0;
+  db.sessions.forEach(s=>{ if(s.f===fid && dayOf(s.start)===day) n += s.count||0; });
+  if(cur && cur.f===fid && dayOf(cur.start)===day) n += cur.count;
+  return n;
+}
+function setDayCount(day, fid, n){
+  n = Math.max(0, Math.round(n||0));
+  const base = sessionCount(day, fid);
+  if(!db.tally[fid]) db.tally[fid] = {};
+  if(n >= base){ db.tally[fid][day] = n - base; }
+  else{                                   // GPSでタップした分より少なくしたい場合は後ろから減らす
+    db.tally[fid][day] = 0;
+    let over = base - n;
+    for(let i=db.sessions.length-1; i>=0 && over>0; i--){
+      const ss = db.sessions[i];
+      if(ss.f!==fid || dayOf(ss.start)!==day) continue;
+      const cut = Math.min(over, ss.count||0); ss.count -= cut; over -= cut;
+    }
+    if(cur && cur.f===fid && dayOf(cur.start)===day && over>0){
+      const cut = Math.min(over, cur.count); cur.count -= cut; over -= cut;
+    }
+  }
+  if(!db.tally[fid][day]) delete db.tally[fid][day];
+  saveDB();
+}
+
+function allDays(){
+  const days = new Set();
+  db.sessions.forEach(s=>days.add(dayOf(s.start)));
+  db.marks.forEach(m=>days.add(m.day));
+  Object.values(db.tally).forEach(o=>Object.keys(o).forEach(d=>{ if(o[d]) days.add(d); }));
+  extraDays.forEach(d=>days.add(d));
+  return [...days].sort().reverse();
+}
+let extraDays = [];                       // 「日付を追加」で開いた、まだ中身のない日
+
+function renderHist(){
+  const el = document.getElementById("histList");
+  const days = allDays();
+  if(!days.length){
+    el.innerHTML = '<div class="row"><div class="g"><em>まだ記録がありません</em></div></div>'; return;
+  }
+  el.innerHTML = days.map(d=>{
+    const tot = types(d);
+    const lines = db.flyers.map(f=>{
+      const t = statsFor(d, f.id);
+      const isNew = extraDays.includes(d) && f.id===db.current;
+      if(!t.count && !t.marks && !t.km && !isNew) return null;
+      const extra = [];
+      if(t.km    > 0) extra.push("GPS "+t.km.toFixed(2)+"km");
+      if(t.marks > 0) extra.push("手描き"+t.marks+"件");
+      return `<div class="cntrow">
+        <span class="swatch" style="background:${f.color}"></span>
+        <span class="cnm">${esc(f.name)}</span>
+        <input class="cin" type="number" inputmode="numeric" min="0" step="10"
+               value="${t.count}" data-day="${d}" data-f="${f.id}">
+        <span class="cun">枚</span>
+        <span class="cex">${extra.join(" ・ ")}</span>
+      </div>`;
+    }).filter(Boolean).join("");
+    return `<div class="dayblk">
+      <div class="dayhead">
+        <b>${d}</b><span class="daytot">${tot.count}枚</span>
+        <button class="mini" data-zoom="${d}">表示</button>
+        <button class="mini danger" data-del="${d}">削除</button>
+      </div>${lines}</div>`;
+  }).join("");
+
+  el.querySelectorAll(".cin").forEach(inp=>{
+    // 入力中に一覧ごと作り直すとフォーカスが飛ぶので、その場の数字だけ更新する
+    inp.onchange = ()=>{
+      const d = inp.dataset.day, fid = +inp.dataset.f;
+      setDayCount(d, fid, +inp.value);
+      inp.value = statsFor(d, fid).count;
+      const tot = inp.closest(".dayblk").querySelector(".daytot");
+      if(tot) tot.textContent = statsFor(d, null).count + "枚";
+      renderSummary(); updateHud();
+    };
+  });
+  el.querySelectorAll("[data-zoom]").forEach(b=> b.onclick = ()=>{
+    const d=b.dataset.zoom, all=[];
+    db.sessions.forEach(s=>{ if(dayOf(s.start)===d) all.push(...s.pts); });
+    db.marks.forEach(m=>{ if(m.day===d) all.push(...m.pts); });
+    if(all.length){ map.fitBounds(L.latLngBounds(all).pad(0.12)); panel.classList.remove("show"); follow=false; }
+    else toast("この日の地図の記録はありません");
+  });
+  el.querySelectorAll("[data-del]").forEach(b=> b.onclick = ()=>{
+    const d=b.dataset.del;
+    if(!confirm(d+" の記録（すべての版）を削除しますか？")) return;
+    db.sessions = db.sessions.filter(s=> dayOf(s.start)!==d);
+    db.marks    = db.marks.filter(m=> m.day!==d);
+    Object.values(db.tally).forEach(o=> delete o[d]);
+    extraDays = extraDays.filter(x=>x!==d);
+    saveDB(); drawHistory(); renderHist(); renderSummary(); updateHud();
+  });
+}
+function types(d){ return statsFor(d, null); }
+
+/* ---- 書き出し / 読み込み ---- */
+function download(name, text, mime){
+  const url = URL.createObjectURL(new Blob([text], {type:mime}));
+  const a = document.createElement("a");
+  a.href=url; a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+document.getElementById("expCsv").onclick = ()=>{
+  const days = new Set();
+  db.sessions.forEach(s=>days.add(dayOf(s.start)));
+  db.marks.forEach(m=>days.add(m.day));
+  Object.values(db.tally).forEach(o=>Object.keys(o).forEach(d=>{ if(o[d]) days.add(d); }));
+  const q = v => /[",\n]/.test(v) ? '"'+String(v).replace(/"/g,'""')+'"' : v;
+  const rows = [["日付","チラシの版","枚数","GPS距離km","手描き距離km","手描き件数"]];
+  [...days].sort().forEach(d=> db.flyers.forEach(f=>{
+    const t = statsFor(d, f.id);
+    if(!t.count && !t.km && !t.marks) return;
+    rows.push([d, f.name, t.count, t.km.toFixed(3), t.mkm.toFixed(3), t.marks]);
+  }));
+  download("posting-"+today()+".csv",
+    "﻿" + rows.map(r=>r.map(q).join(",")).join("\r\n"), "text/csv");
+  toast("Excelやスプレッドシートで開けます");
+};
+document.getElementById("expJson").onclick = ()=>{
+  download("posting-"+today()+".json", JSON.stringify(db), "application/json");
+  pref.lastBackup = Date.now(); savePref();
+  document.getElementById("expJson").classList.remove("nag");
+  showUsage();
+  toast("「ファイル」アプリなどに保存してください");
+};
+document.getElementById("expGpx").onclick = ()=>{
+  const seg = (name, p) => "<trk><name>"+esc(name)+"</name><trkseg>"+
+    p.map(q=>`<trkpt lat="${q[0]}" lon="${q[1]}"/>`).join("")+"</trkseg></trk>";
+  const a = db.sessions.filter(s=>s.pts.length>1)
+    .map(s=>seg(fName(s.f)+" GPS "+dayOf(s.start)+" ("+(s.count||0)+"枚)", s.pts)).join("");
+  const b = db.marks.filter(m=>m.pts.length>1)
+    .map(m=>seg(fName(m.f)+(m.type==="area"?" 囲み ":" なぞり ")+m.day,
+                m.type==="area" ? m.pts.concat([m.pts[0]]) : m.pts)).join("");
+  download("posting-"+today()+".gpx",
+    `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="配布マップ" xmlns="http://www.topografix.com/GPX/1/1">${a}${b}</gpx>`,
+    "application/gpx+xml");
+};
+document.getElementById("impJson").onclick = ()=> document.getElementById("fileIn").click();
+document.getElementById("fileIn").onchange = e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const inc = JSON.parse(r.result);
+      if(!inc || (!Array.isArray(inc.sessions) && !Array.isArray(inc.marks))) throw 0;
+      let add = 0;
+      const hf = new Set(db.flyers.map(x=>x.id));
+      (inc.flyers||[]).forEach(x=>{ if(!hf.has(x.id)){ db.flyers.push(x); db.tally[x.id]=db.tally[x.id]||{}; } });
+      const fallback = db.flyers[0].id;
+      const hs = new Set(db.sessions.map(s=>s.id));
+      (inc.sessions||[]).forEach(s=>{ if(!hs.has(s.id)){ s.f = s.f!=null && db.flyers.some(x=>x.id===s.f) ? s.f : fallback; db.sessions.push(s); add++; } });
+      const hm = new Set(db.marks.map(m=>m.id));
+      (inc.marks||[]).forEach(m=>{ if(!hm.has(m.id)){ m.f = m.f!=null && db.flyers.some(x=>x.id===m.f) ? m.f : fallback; db.marks.push(m); add++; } });
+      const it = inc.tally || {};
+      const flat = Object.keys(it).length && /^\d{4}-\d{2}-\d{2}$/.test(Object.keys(it)[0]);
+      if(flat){ db.tally[fallback] = db.tally[fallback]||{};
+        Object.keys(it).forEach(d=> db.tally[fallback][d] = Math.max(db.tally[fallback][d]||0, it[d]||0)); }
+      else Object.keys(it).forEach(fid=>{
+        const k = db.flyers.some(x=>String(x.id)===String(fid)) ? (db.flyers.find(x=>String(x.id)===String(fid)).id) : fallback;
+        db.tally[k] = db.tally[k]||{};
+        Object.keys(it[fid]).forEach(d=> db.tally[k][d] = Math.max(db.tally[k][d]||0, it[fid][d]||0));
+      });
+      db.sessions.sort((a,b)=>a.start-b.start); db.marks.sort((a,b)=>a.ts-b.ts);
+      saveDB(); drawHistory(); renderHist(); renderSummary(); updateHud();
+      toast(add+"件を復元しました");
+    }catch(err){ toast("読み込めませんでした"); }
+  };
+  r.readAsText(f); e.target.value = "";
+};
+document.getElementById("wipe").onclick = ()=>{
+  if(!confirm("すべての記録を削除します（チラシの版の設定は残ります）。よろしいですか？")) return;
+  db.sessions=[]; db.marks=[]; db.tally={}; db.flyers.forEach(f=>db.tally[f.id]={});
+  saveDB(); drawHistory(); renderHist(); renderSummary(); updateHud(); toast("削除しました");
+};
+
+/* ---- トースト ---- */
+let toastT = null;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(()=> t.classList.remove("show"), 2400);
+}
+
+/* =========================================================
+   データの安全（永続化・バックアップ）
+   ========================================================= */
+const standalone = window.matchMedia("(display-mode: standalone)").matches
+                || window.navigator.standalone === true;
+
+/* WebKitは「ホーム画面Webアプリとして開かれているか」なども見て永続化を許可する。
+   すでに許可済みなら再要求しない。 */
+async function checkPersist(ask){
+  const el   = document.getElementById("stPersist");
+  const note = document.getElementById("stPersistNote");
+  const btn  = document.getElementById("stAsk");
+  if(!(navigator.storage && navigator.storage.persist)){
+    el.textContent = "保存の永続化：この端末は非対応";
+    note.textContent = "iOS 15.2以降のSafariで対応します。バックアップをこまめに取ってください。";
+    btn.style.display = "none";
+    return false;
+  }
+  let ok = false;
+  try{ ok = await navigator.storage.persisted(); }catch(e){}
+  if(!ok && ask){ try{ ok = await navigator.storage.persist(); }catch(e){} }
+  el.textContent = "保存の永続化：" + (ok ? "有効" : "未許可");
+  note.textContent = ok
+    ? "空き容量が減っても、このアプリの記録は自動削除の対象になりません。"
+    : (standalone ? "もう一度要求できます。だめでもすぐ消えるわけではありません。"
+                  : "ホーム画面から起動すると許可されやすくなります。");
+  btn.style.display = ok ? "none" : "";
+  return ok;
+}
+async function showUsage(){
+  const el = document.getElementById("stUsage");
+  const lb = pref.lastBackup;
+  const days = lb ? Math.floor((Date.now()-lb)/86400000) : null;
+  document.getElementById("stBackup").textContent =
+    "最後のバックアップ：" + (lb ? (days===0 ? "今日" : days+"日前") : "まだ取っていません");
+  let u = "";
+  if(navigator.storage && navigator.storage.estimate){
+    try{ const {usage} = await navigator.storage.estimate();
+         if(usage!=null) u = "使用量 " + (usage<1048576 ? Math.max(1,Math.round(usage/1024))+" KB"
+                                                        : (usage/1048576).toFixed(1)+" MB"); }catch(e){}
+  }
+  el.textContent = [standalone ? "ホーム画面から起動中" : "Safariのタブで表示中", u].filter(Boolean).join(" ・ ");
+  document.getElementById("stTab").style.display = standalone ? "none" : "";
+  document.getElementById("stBroken").style.display = loadError ? "" : "none";
+}
+document.getElementById("stAsk").onclick = async ()=>{
+  const ok = await checkPersist(true);
+  toast(ok ? "永続化が有効になりました" : "いまは許可されませんでした（データはそのまま使えます）");
+};
+document.getElementById("stBroken").onclick = ()=>{
+  const keys = Object.keys(localStorage).filter(k=>k.startsWith(KEY+".broken"));
+  if(!keys.length){ toast("退避データはありません"); return; }
+  download("posting-broken-"+today()+".json",
+           keys.map(k=>localStorage.getItem(k)).join("\n"), "application/json");
+};
+
+function hasAnyRecord(){
+  return db.sessions.length || db.marks.length ||
+         Object.values(db.tally).some(o=>Object.keys(o).length);
+}
+function backupNag(){
+  if(!hasAnyRecord()) return;
+  const lb = pref.lastBackup || 0;
+  if(Date.now() - lb < 30*86400000) return;
+  document.getElementById("expJson").classList.add("nag");
+  setTimeout(()=> toast("そろそろバックアップを。☰メニュー →「JSONで書き出し」"), 2500);
+}
+
+/* ---- 起動 ---- */
+setMode(pref.mode || "gps");
+drawHistory(); updateHud(); syncMiss();
+checkPersist(true);            // 起動時に一度だけ永続化を要求する
+backupNag();
+if(loadError) setTimeout(()=> toast("前回の保存データを読み込めませんでした。壊れたデータは退避してあります"), 1200);
+if(!standalone && !pref.tabWarned){
+  pref.tabWarned = true; savePref();
+  setTimeout(()=> toast("Safariのタブのままだと記録が消えることがあります。共有→ホーム画面に追加を"), 4200);
+}
+(function(){
+  const last = db.marks[db.marks.length-1] || db.sessions[db.sessions.length-1];
+  const p = last && (last.pts||[]);
+  if(p && p.length) map.setView(p[p.length-1], 16);
+})();
+window.addEventListener("beforeunload", e=>{ if(tracking){ e.preventDefault(); e.returnValue=""; } });
+</script>
+</body>
+</html>
