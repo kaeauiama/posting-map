@@ -15,9 +15,10 @@ iPhoneのホーム画面に追加するだけで、普通のアプリのよう�
 
 ## このリポジトリの中身
 
-iPhone に入れるために **GitHub Pages へ上げるのは、リポジトリ直下のこの7つだけ**です。
+iPhone から開くアプリの中身は **`dist/` フォルダの中の7つだけ**です。
+GitHub Pages が配信するのもこのフォルダだけで、他は公開されません。
 
-| ファイル | 説明 |
+| `dist/` の中身 | 説明 |
 |---|---|
 | `index.html` | アプリ本体。地図ライブラリもこの中に入っています |
 | `manifest.webmanifest` | アプリ名・アイコン・起動時の見た目の定義（PWA用） |
@@ -26,14 +27,17 @@ iPhone に入れるために **GitHub Pages へ上げるのは、リポジトリ
 | `icon-maskable-512.png` | Androidの丸型・角丸マスク用 |
 | `icon-32.png` | ブラウザのタブ用 |
 
-`src/` `test/` `research/` `docs/` `tools/` は開発用なので、上げても害はありませんが不要です。
-`app-icon.svg` はアイコンの元データです。
+`src/` `test/` `research/` `docs/` `tools/` は開発用で、配信には含まれません。
+リポジトリ直下の `manifest.webmanifest` と `icon-*.png` は元ファイルで、
+`python3 build.py` が `dist/` に複製します。`app-icon.svg` はアイコンの元データです。
 
-> **開発する人へ**: 編集するのは `src/index.html` です。直下の `index.html` は
+> **開発する人へ**: 編集するのは `src/index.html` です。`dist/index.html` は
 > `python3 build.py` が作る成果物なので直接触らないでください。
+> `dist/` はリポジトリにコミットします（GitHub Actions はビルドせず、そのまま配るだけです）。
 > 詳しくは `CLAUDE.md` と `DEVELOPMENT.md` を読んでください。
 
----|---|
+| ファイル | 説明 |
+|---|---|
 | `index.html` | アプリ本体。地図ライブラリもこの中に入っています |
 | `manifest.webmanifest` | アプリ名・アイコン・起動時の見た目の定義（PWA用） |
 | `icon-180.png` | iPhoneのホーム画面アイコン |
@@ -50,23 +54,26 @@ iPhone に入れるために **GitHub Pages へ上げるのは、リポジトリ
 
 ### 手順1：ファイルをネット上に置く
 
-`index.html` は**HTTPSのURLで開く必要があります**。
+アプリは**HTTPSのURLで開く必要があります**。
 （iPhoneはセキュリティ上、ファイルを直接開いた状態ではGPSを使わせてくれません）
 
 置き場所は無料で作れます。パソコンのブラウザだけで完結し、Macも開発ツールも要りません。
 
 #### おすすめ：GitHub Pages（無料・ずっと使える）
 
+このリポジトリはすでに GitHub 上にあり、公開の設定も済んでいます。
+はじめて自分で作る場合の手順は次のとおりです。
+
 1. <https://github.com> でアカウントを作る（無料）
 2. 右上の「＋」→ **New repository**
 3. Repository name に `posting-map` と入力、**Public** を選んで **Create repository**
-4. 次の画面の **uploading an existing file** をクリック
-5. `index.html` `manifest.webmanifest` `icon-*.png`（5つ）を**まとめてドラッグ＆ドロップ**
-   → **Commit changes**
-6. 上のタブの **Settings** → 左メニューの **Pages**
-7. Branch を **main** / **/(root)** にして **Save**
-8. 1〜2分待つと、同じページに URL が表示されます
-   → `https://（あなたのID）.github.io/posting-map/`
+4. このリポジトリの中身（`dist/` と `.github/` を含む）をそのまま push する
+5. 上のタブの **Settings** → 左メニューの **Pages**
+6. **Source** を **GitHub Actions** にする（Branch を選ぶ必要はありません）
+7. 上のタブの **Actions** で緑のチェックが付くのを1〜2分待つ
+   → `https://（あなたのID）.github.io/posting-map/` で開けます
+
+以後、`dist/` の中身が変わって main に入るたび、自動で公開版が入れ替わります。
 
 > リポジトリを Public にすると、URLを知っている人は誰でもアプリを開けます。
 > ただし**配布記録のデータはあなたのiPhoneの中だけ**に保存されるので、他人には見えません。
@@ -87,7 +94,7 @@ iPhone に入れるために **GitHub Pages へ上げるのは、リポジトリ
 4. ホーム画面にできたアイコンから起動する（アドレスバーのない全画面で立ち上がります）
 
 > アイコンが白紙や地図のスクリーンショットになる場合は、`icon-180.png` が
-> `index.html` と同じ階層に上がっているか確認してください。
+> `dist/` の中に入っているか確認してください。
 > 一度ホーム画面に追加したあとにアイコンを差し替えたときは、
 > 古いアイコンを削除してから追加し直すと反映されます。
 
@@ -380,8 +387,11 @@ Web標準のGeolocation APIには測位の頻度を指定する仕組みがな�
 
 ## 直したいとき
 
-`index.html` をテキストエディタで開けば全部書いてあります。
-GitHubの画面上で直接編集（鉛筆アイコン）してCommitすれば、数十秒でアプリに反映されます。
+`src/index.html` をテキストエディタで開けば全部書いてあります。
+
+急ぎのときは GitHub の画面上で `dist/index.html` を直接編集（鉛筆アイコン）して
+Commit すれば、1〜2分でアプリに反映されます。ただしそれは成果物なので、
+**同じ直しを `src/index.html` にも入れておいてください**。次のビルドで消えます。
 
 よく変えたくなりそうな値：
 

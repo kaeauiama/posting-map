@@ -1,0 +1,35 @@
+# dist/ をそのまま GitHub Pages に上げる。
+# ビルド（src/index.html → dist/index.html）は手元の  npm run build  で行い、
+# dist/ をコミットする運用。ここではファイルを配るだけなので、壊れにくい。
+name: Deploy dist to Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['dist/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 配信は1本ずつ。走行中のものは止めない（公開が中途半端にならないように）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

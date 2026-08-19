@@ -1,0 +1,17 @@
+{
+  "name": "配布マップ",
+  "short_name": "配布マップ",
+  "description": "ポスティングした道と枚数を、チラシの版ごとに記録する地図アプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#16203a",
+  "theme_color": "#16203a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
