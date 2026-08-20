@@ -23,6 +23,7 @@ build.py            ← src → dist（Leafletを<!--LEAFLET-->に流し込む�
 dist/               ← ビルド成果物。GitHub Pages が配信するのはここだけ
 manifest.webmanifest, icon-*.png, app-icon.svg   ← 元ファイル。build.py が dist/ に複製する
 .github/workflows/pages.yml   ← dist/ が変わったら Pages に上げる
+THIRD-PARTY.md      ← 同梱物の権利関係（Leaflet の BSD-2 本文、OSM の ODbL）
 test/               ← Playwright のテスト（実機に近い条件で動かす）
 research/           ← OSMデータの分析スクリプト（判断の裏取りに使ったもの）
 docs/               ← 業務調査

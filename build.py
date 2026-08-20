@@ -11,6 +11,7 @@ import pathlib, shutil, sys
 ROOT = pathlib.Path(__file__).parent
 SRC  = ROOT / "src" / "index.html"
 LEAF = ROOT / "node_modules" / "leaflet" / "dist"
+LICE = ROOT / "node_modules" / "leaflet" / "LICENSE"   # BSD-2は再配布時に本文の掲示が要る
 MARK = "<!--LEAFLET-->"
 # dist/ と dev/ に一緒に置くもの（アプリ本体と同じ階層にある必要がある）
 ASSETS = ["manifest.webmanifest", "icon-32.png", "icon-180.png",
@@ -23,7 +24,11 @@ def main():
     css = (LEAF / "leaflet.css").read_text(encoding="utf-8")
     js  = (LEAF / "leaflet.js").read_text(encoding="utf-8")
 
-    inline = ("<!-- Leaflet 1.9.4 (BSD-2-Clause) https://leafletjs.com/ を同梱 -->\n"
+    # ライセンス本文もコメントに入れる。配信されるのは dist/index.html 単体なので、
+    # このファイルだけで BSD-2 の条件（著作権表示と本文の掲示）を満たす必要がある。
+    lic = LICE.read_text(encoding="utf-8").replace("--", "- -")   # HTMLコメントを閉じさせない
+    inline = ("<!-- Leaflet 1.9.4 https://leafletjs.com/ を同梱\n\n"
+              + lic + "\n-->\n"
               "<style>\n" + css + "\n</style>\n<script>\n" + js + "\n</script>")
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)

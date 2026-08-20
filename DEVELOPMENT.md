@@ -270,6 +270,8 @@ WebKit は「ホーム画面 Web アプリとして開かれているか」な�
 アプリは GeoJSON と Overpass JSON のどちらでも読める（`normalizeWays` / `normalizeBuildings`）。
 
 データは [OpenStreetMap](https://www.openstreetmap.org/copyright)（ODbL）。
+リポジトリに置いた実データの出典表示は `test/fixtures/README.md`、
+同梱物全体の権利関係は `THIRD-PARTY.md` にまとめてある。
 道路データを取り込むと、地図の出典表示に自動で追記される。
 
 ---

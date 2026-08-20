@@ -428,3 +428,6 @@ Commit すれば、1〜2分でアプリに反映されます。ただしそれ�
 
 地図：[国土地理院タイル](https://maps.gsi.go.jp/development/ichiran.html) / [OpenStreetMap](https://www.openstreetmap.org/copyright)
 地図ライブラリ：[Leaflet 1.9.4](https://leafletjs.com/)（BSD-2-Clause）
+
+同梱しているものの権利関係は [THIRD-PARTY.md](THIRD-PARTY.md) にまとめてあります。
+このリポジトリ自体にはライセンスを付けていません（公開はしていますが、利用許諾ではありません）。

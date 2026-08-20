@@ -22,7 +22,7 @@ node test/08-roads.mjs            # 個別に走らせる
 | `08-roads.mjs` | 実データ（`fixtures/`）の取り込み、配布率、描画性能 |
 
 `fixtures/roads.geojson` と `fixtures/buildings.geojson` は東京の実データ
-（2.84 × 2.53 km、道路2,183本・建物13,970件）です。取り直し方は
-`../DEVELOPMENT.md` の「道路データ」を参照してください。
+（2.84 × 2.53 km、道路2,183本・建物13,970件）です。OpenStreetMap 由来で
+ライセンスは ODbL 1.0 — 出典表示と取り直し方は `fixtures/README.md` にあります。
 
 環境変数 `PW_CHROMIUM` で Chromium の実行ファイルを指定できます。
