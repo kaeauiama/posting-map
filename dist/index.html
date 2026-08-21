@@ -756,6 +756,26 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .stat span{display:block; font-size:10px; color:var(--ink-2); margin-top:2px;}
   #gpsdot{width:10px;height:10px;border-radius:50%;background:#bbb;display:inline-block;vertical-align:-1px;margin-right:5px;}
 
+  /* ---------- ポケットモード ---------- */
+  /* ポケットに入れている間、画面を真っ黒にして、スライダー以外は何も反応させない。
+     布に押されて枚数が増える事故を止めるのが第一の目的。有機ELでは黒い画素が
+     消えるので電池も持つ。GPSの記録は止めない。 */
+  #pocket{display:none; position:fixed; inset:0; z-index:4000; background:#000; touch-action:none;}
+  body.pocket #pocket{display:block;}
+  body.pocket #map, body.pocket #hud, body.pocket #bottom, body.pocket #hintTop{display:none;}
+  #pkMid{position:absolute; left:0; right:0; top:38%; text-align:center;}
+  #pkDot{width:11px; height:11px; border-radius:50%; background:#4ade80; margin:0 auto 14px;
+         opacity:.16; transition:opacity .25s;}
+  #pkDot.on{opacity:.95;}
+  #pkLabel{color:#6b6b6b; font-size:13px; letter-spacing:.14em;}
+  #pkSlide{position:absolute; left:22px; right:22px; bottom:calc(var(--pad-b) + 46px);
+           height:66px; border-radius:33px; border:1px solid #262626;}
+  #pkKnob{position:absolute; left:4px; top:4px; width:56px; height:56px; border-radius:50%;
+          background:#171717; border:1px solid #2f2f2f; color:#8a8a8a; font-size:19px;
+          display:flex; align-items:center; justify-content:center; touch-action:none;}
+  #pkHint{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+          color:#5a5a5a; font-size:14px; pointer-events:none;}
+
   /* ---------- 下部 ---------- */
   #bottom{
     position:fixed; left:0; right:0; bottom:0; z-index:1000; pointer-events:none;
@@ -819,6 +839,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
       box-shadow:0 2px 8px #1824401f;font-size:20px;display:flex;align-items:center;justify-content:center;}
   .sq:active{background:#eef1f6;}
   #mid{flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; pointer-events:none;}
+  #pocketBtn{display:none; width:100%; background:#eef1f6; border:1px solid var(--line);
+             border-radius:10px; padding:9px 0; font-size:12px; font-weight:700; color:var(--ink-2);}
+  body.tracking #pocketBtn{display:block;}
+  body.tracking #hint{display:none;}
   #hint{font-size:11px; color:var(--ink-2); text-align:center; line-height:1.3;
         background:#ffffffcc; border-radius:8px; padding:2px 6px;
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -963,6 +987,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <div id="mid">
       <div id="hint">歩くと軌跡が自動で残ります</div>
+      <button id="pocketBtn">ポケットに入れる（画面を消す）</button>
       <button id="startBtn"><span id="gpsdot"></span><span id="startLabel">記録スタート</span></button>
     </div>
     <div class="col">
@@ -976,6 +1001,18 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <button class="sq" data-act="loc" aria-label="現在地へ">◎</button>
     <label id="dayWrap" for="dayPick"><i>記録日</i><input type="date" id="dayPick"></label>
     <button class="sq" id="undoBtn" aria-label="ひとつ戻す">↶</button>
+  </div>
+</div>
+
+<!-- ポケットに入れている間の画面。スライダー以外は何も反応しない -->
+<div id="pocket">
+  <div id="pkMid">
+    <div id="pkDot"></div>
+    <div id="pkLabel">記録中</div>
+  </div>
+  <div id="pkSlide">
+    <div id="pkHint">スライドで戻る</div>
+    <button id="pkKnob" aria-label="スライドして戻る">▶</button>
   </div>
 </div>
 
@@ -2070,6 +2107,7 @@ function splitSession(){
 function onPos(p){
   const {latitude:lat, longitude:lng, accuracy:acc} = p.coords;
   const here = [ +lat.toFixed(6), +lng.toFixed(6) ];
+  if(pocket){ pkBlink(); takeFix(here, acc); return; }   // 黒い画面のときは描かない
   if(!meMarker){
     meMarker = L.circleMarker(here, {radius:8, color:"#fff", weight:3, fillColor:"#1668dc", fillOpacity:1}).addTo(map);
     meCircle = L.circle(here, {radius:acc, color:"#1668dc", weight:1, fillColor:"#1668dc", fillOpacity:.10}).addTo(map);
@@ -2084,25 +2122,29 @@ function onPos(p){
     if(q.x < sz.x*0.25 || q.x > sz.x*0.75 || q.y < sz.y*0.22 || q.y > sz.y*0.78)
       map.panTo(here, {animate:true, duration:.6});
   }
-  if(!tracking) return;
-  if(acc > 40) return;
-
+  if(!takeFix(here, acc)) return;
+  liveLine.addLatLng(here); updateHud();
+  if(map.hasLayer(fog)) fog.redraw();
+}
+/* 点を残すかどうかの判定。描画とは切り離してあるので、画面を消していても
+   （ポケットモード）残る軌跡は同じになる。残したときだけ true を返す。 */
+function takeFix(here, acc){
+  if(!tracking || acc > 40) return false;
   const now = Date.now();
   lastFix = here;
   if(lastPt){
     const d  = dist(lastPt, here);
     const dt = (now - lastAt) / 1000;
-    if(d > 200){ lastPt = here; lastAt = now; lastBrg = null; return; }   // 飛んだ点
+    if(d > 200){ lastPt = here; lastAt = now; lastBrg = null; return false; }   // 飛んだ点
     let take = (dt >= pref.interval && d >= MIN_D);
     // 間隔を待つと角が丸まるので、大きく向きが変わったときは早めに1点残す
     if(!take && d >= 8 && dt >= 2.5 && lastBrg !== null
        && turnAngle(bearing(lastPt, here), lastBrg) > TURN_DEG) take = true;
-    if(!take) return;
+    if(!take) return false;
     lastBrg = bearing(lastPt, here);
   }
   cur.pts.push(here); lastPt = here; lastAt = now;
-  liveLine.addLatLng(here); updateHud();
-  if(map.hasLayer(fog)) fog.redraw();
+  return true;
 }
 function onErr(e){ setGps("bad"); if(e.code===1) toast("位置情報が許可されていません"); }
 
@@ -2115,11 +2157,14 @@ function start(){
   acquireWakeLock();
   document.getElementById("startBtn").classList.add("on");
   document.getElementById("startLabel").textContent = "記録ストップ";
+  document.body.classList.add("tracking");
   tickTimer = setInterval(updateHud, 5000);
   updateHud(); toast("「"+curF().name+"」で記録を開始しました");
 }
 function stop(){
   tracking = false;
+  exitPocket();
+  document.body.classList.remove("tracking");
   if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
   clearInterval(tickTimer); tickTimer=null;
   releaseWakeLock(); setGps("off");
@@ -2133,6 +2178,67 @@ function stop(){
   document.getElementById("startLabel").textContent = "記録スタート";
   updateHud();
 }
+
+/* =========================================================
+   ポケットモード
+   ========================================================= */
+/* 画面を黒くして、スライダー以外は触っても何も起きない状態にする。
+   GPSの記録は続く。地図は display:none にして、描画とタイルの取得を止める。 */
+let pocket = false, pkGrab = false, pkStart = 0, pkMax = 0, pkLit = 0;
+
+function enterPocket(){
+  if(pocket || !tracking) return;
+  pocket = true;
+  document.body.classList.add("pocket");
+  pkRelease();
+}
+function exitPocket(){
+  if(!pocket) return;
+  pocket = false;
+  document.body.classList.remove("pocket");
+  pkRelease();
+  map.invalidateSize();                       // 隠している間に大きさを見失うため
+  if(cur && cur.pts.length) liveLine.setLatLngs(cur.pts);   // 溜めた点をまとめて描く
+  if(lastFix && meMarker){ meMarker.setLatLng(lastFix); meCircle.setLatLng(lastFix); }
+  updateHud();
+}
+/* 測位が届くたびに緑の点を1回光らせる。GPSもJSも生きている証拠になる。
+   ただし4秒に1回まで（光らせるたびに画面を描き直すため）。 */
+function pkBlink(){
+  const now = Date.now();
+  if(now - pkLit < 4000) return;
+  pkLit = now;
+  const d = document.getElementById("pkDot");
+  d.classList.add("on");
+  setTimeout(()=> d.classList.remove("on"), 260);
+}
+function pkRelease(){
+  pkGrab = false;
+  const k = document.getElementById("pkKnob");
+  k.style.transform = "translateX(0)";
+  document.getElementById("pkHint").style.opacity = "1";
+}
+(function initPocket(){
+  const rail = document.getElementById("pkSlide");
+  const knob = document.getElementById("pkKnob");
+  knob.addEventListener("pointerdown", e=>{
+    pkGrab = true; pkStart = e.clientX;
+    pkMax = rail.clientWidth - knob.offsetWidth - 8;
+    if(knob.setPointerCapture) knob.setPointerCapture(e.pointerId);
+  });
+  knob.addEventListener("pointermove", e=>{
+    if(!pkGrab) return;
+    const x = Math.max(0, Math.min(pkMax, e.clientX - pkStart));
+    knob.style.transform = "translateX(" + x + "px)";
+    document.getElementById("pkHint").style.opacity = String(Math.max(0, 1 - x/pkMax*1.4));
+    if(x >= pkMax * 0.6) exitPocket();        // 6割まで引いたら解除
+  });
+  knob.addEventListener("pointerup", pkRelease);
+  knob.addEventListener("pointercancel", pkRelease);
+  // 黒い部分は、触られても何もしない（ここに落ちたタッチは捨てる）
+  document.getElementById("pocket").addEventListener("pointerdown", e=> e.preventDefault());
+  document.getElementById("pocketBtn").onclick = enterPocket;
+})();
 
 /* =========================================================
    手描き

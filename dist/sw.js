@@ -8,7 +8,7 @@
    ブラウザが「新しい版」として入れ直すので、更新が確実に届く。
    ここを凝ると利用者が自力で直せなくなる。小さいまま保つこと。 */
 
-const STAMP = "4ae08890156a";
+const STAMP = "bbbe34fba1ac";
 const APP   = "postingmap-app-" + STAMP;
 const TILES = "postingmap-tiles-v1";     // タイルは版が変わっても捨てない
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-32.png",
