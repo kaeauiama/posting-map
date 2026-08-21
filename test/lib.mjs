@@ -37,13 +37,15 @@ const TILE = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">
 /** quiet=true（既定）のとき、起動時の「Safariのタブ」注意を出さない。
     この注意そのものを見たいテストだけ quiet:false にする。 */
 export async function open({geolocation = {latitude:35.6812, longitude:139.7671, accuracy:8},
-                            viewport = {width:390, height:844}, initScript, quiet = true} = {}) {
+                            viewport = {width:390, height:844}, initScript, quiet = true,
+                            sw = false} = {}) {
   const server = await serve();
   const browser = await chromium.launch(
     process.env.PW_CHROMIUM ? {executablePath: process.env.PW_CHROMIUM} : {});
   const ctx = await browser.newContext({
     viewport, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'ja-JP',
     permissions: ['geolocation'], geolocation,
+    serviceWorkers: sw ? 'allow' : 'block',
   });
   await ctx.route(/cyberjapandata|tile\.openstreetmap/, r =>
     r.fulfill({status:200, contentType:'image/svg+xml', body:TILE}));

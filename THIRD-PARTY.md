@@ -54,8 +54,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 | タイル | 提供元 | 条件 |
 |---|---|---|
-| 淡色 / 標準 / 航空写真 | [国土地理院](https://maps.gsi.go.jp/development/ichiran.html) | 出典の明示が必要。ウェブ表示は申請不要 |
-| OpenStreetMap | [OSM Foundation](https://operations.osmfoundation.org/policies/tiles/) | © OpenStreetMap contributors の表示。タイル利用ポリシーの範囲内で使うこと |
+| 淡色 / 標準 / 航空写真 | [国土地理院](https://maps.gsi.go.jp/development/ichiran.html) | 出典の明示が必要。ウェブ表示は申請不要。事前保存についての明文の制限はない |
+| OpenStreetMap | [OSM Foundation](https://operations.osmfoundation.org/policies/tiles/) | © OpenStreetMap contributors の表示。**事前のまとめ取り・オフライン保存は禁止** |
+
+オフライン用の「まとめて保存」は**国土地理院のタイルにだけ**用意しています。
+OpenStreetMap を選んでいるときはボタンを塞いでいます。どちらの地図でも、
+一度表示したタイルは端末内に残します（OSM のポリシーはこれを禁じておらず、
+むしろ短すぎる保持を戒めています）。保存したタイルは端末から出ません。
 
 ## 道路・建物データ — ODbL 1.0
 

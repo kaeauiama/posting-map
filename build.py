@@ -6,10 +6,11 @@
 
 Leaflet は node_modules から取る。無ければ  npm install  を先に実行すること。
 """
-import pathlib, shutil, sys
+import hashlib, pathlib, shutil, sys
 
 ROOT = pathlib.Path(__file__).parent
 SRC  = ROOT / "src" / "index.html"
+SW   = ROOT / "src" / "sw.js"
 LEAF = ROOT / "node_modules" / "leaflet" / "dist"
 LICE = ROOT / "node_modules" / "leaflet" / "LICENSE"   # BSD-2は再配布時に本文の掲示が要る
 MARK = "<!--LEAFLET-->"
@@ -36,6 +37,7 @@ def main():
     out.write_text(src.replace(MARK, inline), encoding="utf-8")
     for f in ASSETS:
         shutil.copy(ROOT / f, dist / f)
+    write_sw(dist, out.read_text(encoding="utf-8"))
     print(f"built: dist/index.html  ({out.stat().st_size//1024} KB) ＋ アイコンとmanifest")
 
     if "--dev" in sys.argv:
@@ -48,7 +50,17 @@ def main():
             encoding="utf-8")
         for f in ASSETS:
             shutil.copy(ROOT / f, dev / f)
+        write_sw(dev, (dev / "index.html").read_text(encoding="utf-8"))
         print("built: dev/index.html （テスト用。Leafletは外部参照）")
+
+def write_sw(dest, html):
+    """sw.js を置く。中身のハッシュを STAMP に刻むことで、アプリを更新したときだけ
+    Service Worker が入れ替わる（変わらなければブラウザは入れ直さない）。"""
+    stamp = hashlib.sha256(html.encode("utf-8")).hexdigest()[:12]
+    dest.joinpath("sw.js").write_text(
+        SW.read_text(encoding="utf-8").replace("__BUILD__", stamp), encoding="utf-8")
+    return stamp
+
 
 if __name__ == "__main__":
     main()

@@ -14,12 +14,14 @@ Mac も App Store も使わずに運用できることが前提で設計され�
 
 ## 触るファイル
 
-編集するのは **`src/index.html` の1つだけ**です。`dist/index.html` は
-Leaflet を埋め込んだビルド成果物なので、直接編集しないでください。
+編集するのは **`src/index.html`** です。オフライン用の Service Worker だけ
+`src/sw.js` に分かれています（HTMLに埋め込めないため）。`dist/` の中は
+ビルド成果物なので、直接編集しないでください。
 
 ```
-src/index.html      ← 唯一の編集対象（HTML + CSS + JS が全部入り）
-build.py            ← src → dist（Leafletを<!--LEAFLET-->に流し込む）
+src/index.html      ← 主な編集対象（HTML + CSS + JS が全部入り）
+src/sw.js           ← Service Worker。アプリ本体と地図タイルの保存だけを担当
+build.py            ← src → dist（Leafletを<!--LEAFLET-->に流し込み、sw.jsに版を刻む）
 dist/               ← ビルド成果物。GitHub Pages が配信するのはここだけ
 manifest.webmanifest, icon-*.png, app-icon.svg   ← 元ファイル。build.py が dist/ に複製する
 .github/workflows/pages.yml   ← dist/ が変わったら Pages に上げる
@@ -47,11 +49,14 @@ npm run icons      # アイコンを作り直す
 
 これらは好みではなく、**壊すと利用者が使えなくなる**ものです。
 
-1. **単一ファイルを維持する。** ビルド後の `dist/index.html` だけで動くこと。
-   利用者は GitHub の画面からファイルをドラッグして更新します。バンドラは入れないでください。
+1. **ファイルを増やさない。** ビルド後の **`dist/index.html` と `dist/sw.js` の2つ**で
+   動くこと。3つ目を作らないでください。利用者は GitHub の画面からファイルを
+   ドラッグして更新します。バンドラは入れないでください。
+   （`sw.js` を分けた理由は `DEVELOPMENT.md` の「オフライン」を読んでください）
 2. **依存を増やさない。** いまの外部依存は Leaflet 1.9.4 のみで、ファイルに同梱しています。
    実行時に CDN を読みに行かないでください（電波の悪い場所で使います）。
 3. **オフラインで動く。** 地図タイルと道路データの取得以外、通信を必要としないこと。
+   保存済みの範囲なら地図も出ます。アプリ本体も圏外で起動できること。
 4. **iOS Safari で動く。** 対象は iPhone の Safari と、ホーム画面に追加した PWA です。
    検証していない新しい API を無条件に使わないでください。
 5. **屋外・片手・手袋または指サックで操作できる。** 主要な操作は大きく、
@@ -75,6 +80,7 @@ npm run icons      # アイコンを作り直す
 | GPS記録 | `watchPosition`、間引き、区切り、Wake Lock |
 | 手描き | タッチで線・面を引く、消す |
 | 集計 | `statsFor()`, `flyerTotals()`, `roadStats()` |
+| オフライン | Service Worker の登録、タイルのまとめ保存・削除・容量表示 |
 | 画面 | メニュー、チラシの版、書き出し・読み込み |
 
 ### 保存しているもの
@@ -139,6 +145,10 @@ db = {
 - 保存データの形を変えたら、**古い形からの移行テスト**（`03-flyers.mjs` が手本）
 - GPS まわりを触ったら、**間引きと精度の実測**（`06-interval.mjs`）
 - 道路まわりを触ったら、**実データでの取り込みと性能**（`08-roads.mjs`）
+- オフラインまわりを触ったら、**圏外での起動とタイル保存**（`10-offline.mjs`）
+
+`test/lib.mjs` の `open()` は既定で Service Worker を止めています。キャッシュの
+残りで他のテストが揺れるためです。必要なテストだけ `open({sw:true})` にしてください。
 
 ## やらないと決めたこと
 

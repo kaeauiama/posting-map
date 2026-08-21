@@ -175,7 +175,17 @@
           border-radius:50%;background:#eef1f6;font-size:19px;}
   .note{font-size:12px;line-height:1.7;color:var(--ink-2);background:#f7f8fb;border:1px solid var(--line);
         border-radius:10px;padding:11px 13px;margin-top:10px;}
-  select.full{font-family:inherit;font-size:14px;padding:9px;border-radius:9px;border:1px solid var(--line);background:#fff;width:100%;}
+  /* iOSのselectは既定の見た目のままだと行が詰まって読みにくい。見た目を自前にして、
+     文字は16px（これ未満だとiOSが勝手に拡大する）・高さは手袋でも押せる48pxにする。 */
+  select.full{
+    -webkit-appearance:none; appearance:none;
+    font-family:inherit; font-size:16px; line-height:1.5; color:var(--ink);
+    width:100%; min-height:48px; padding:12px 38px 12px 13px;
+    border-radius:11px; border:1px solid var(--line); background-color:#fff;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23606b80' stroke-width='2' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat; background-position:right 13px center;
+    text-overflow:ellipsis;
+  }
   table.tbl{width:100%;border-collapse:collapse;font-size:13px;}
   table.tbl th{text-align:left;font-size:11px;color:var(--ink-2);padding:6px 4px;border-bottom:1px solid var(--line);font-weight:700;}
   table.tbl td{padding:8px 4px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;}
@@ -313,11 +323,35 @@
 
   <h3>地図の種類</h3>
   <select id="baseSel" class="full">
-    <option value="pale">淡色地図（国土地理院／道が見やすい）</option>
+    <option value="pale">淡色地図（国土地理院）</option>
     <option value="std">標準地図（国土地理院）</option>
     <option value="photo">航空写真（国土地理院）</option>
     <option value="osm">OpenStreetMap</option>
   </select>
+  <div class="note">
+    <b>淡色地図</b>は道の形がはっきりしていて、配った道を見分けやすい地図です。迷ったらこれで。
+  </div>
+
+  <h3>地図の保存（オフライン用）</h3>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>保存した地図</b><em id="tileState">確認中</em></div>
+    <div style="display:flex; gap:7px;">
+      <button class="mini" id="tileSave" style="flex:1;padding:11px 0;">この範囲を保存</button>
+      <button class="mini" id="tileClear" style="flex:1;padding:11px 0;">保存を削除</button>
+    </div>
+  </div>
+  <div class="row">
+    <div class="g"><b>オフラインでの起動</b><em id="swState">確認中</em></div>
+    <button class="mini" id="swUpdate">更新を確認</button>
+  </div>
+  <div class="note">
+    商圏の範囲を、拡大・縮小のどの段階でも出るようにまとめて保存します。保存しておくと、
+    電波の届かない場所でもその範囲の地図が出ます。<b>通信量が大きいので Wi-Fi で</b>どうぞ。<br>
+    <b>OpenStreetMap はまとめて保存できません。</b>
+    <a href="https://operations.osmfoundation.org/policies/tiles/">タイル利用ポリシー</a>が
+    事前のまとめ取りを禁じているためです。保存したいときは国土地理院の地図に切り替えてください。
+    なお<b>一度画面に出した分を持っておく動きは、どの地図でも働きます</b>（こちらは禁じられていません）。
+  </div>
 
   <h3>配り漏れチェック</h3>
   <div class="row" style="display:block;">
@@ -1136,6 +1170,129 @@ function drawHistory(){
 map.on("zoomend", ()=>{ if(pref.metric) drawHistory(); });
 
 /* =========================================================
+   オフライン（アプリ本体と地図タイルの保存）
+   ========================================================= */
+/* 読み出しは Service Worker（sw.js）が受け持つ。ここでやるのは
+   「まとめて保存する」「どれだけ保存したか見せる」「消す」の3つだけ。
+   保存はページ側から入れる。Service Worker の準備を待たずに済むのと、
+   テストで確かめやすいため。 */
+const TILE_CACHE = "postingmap-tiles-v1";
+const TILE_Z = [14,15,16,17,18];
+// 1枚あたりの目安（市街地の淡色地図で実測。見積りを出すためだけの数字）
+const TILE_KB = {14:70, 15:52, 16:39, 17:24, 18:14};
+let swReg = null, saving = false, cancelSave = false;
+
+function lon2x(lon,z){ return Math.floor((lon+180)/360*Math.pow(2,z)); }
+function lat2y(lat,z){
+  const r = lat*Math.PI/180;
+  return Math.floor((1 - Math.log(Math.tan(r) + 1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));
+}
+function zoomOfTileUrl(u){ const a = u.split("/"); return +a[a.length-3]; }
+function kbOf(z){ return (TILE_KB[z] || 24) * (pref.base==="photo" ? 2.5 : 1); }
+
+/* 保存する範囲。商圏があればそこ、無ければいま見えている範囲。 */
+function tilePlan(){
+  let bb;
+  if(pref.home) bb = bboxOfHome();
+  else { const b = map.getBounds(); bb = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]; }
+  const B = BASES[pref.base] || BASES.pale;
+  const urls = [];
+  let kb = 0;
+  TILE_Z.forEach(z=>{
+    if(z > B.max) return;
+    const x1 = lon2x(bb[1], z), x2 = lon2x(bb[3], z);
+    const y1 = lat2y(bb[2], z), y2 = lat2y(bb[0], z);
+    for(let x=x1; x<=x2; x++) for(let y=y1; y<=y2; y++){
+      urls.push(B.url.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+      kb += kbOf(z);
+    }
+  });
+  return {urls, mb: kb/1024};
+}
+
+async function saveTiles(){
+  if(saving){ cancelSave = true; return; }
+  if(!("caches" in window)){ toast("この開き方では地図を保存できません"); return; }
+  if(pref.base === "osm"){
+    toast("OpenStreetMap はまとめて保存できません。国土地理院の地図に切り替えてください"); return;
+  }
+  const plan = tilePlan();
+  if(!plan.urls.length){ toast("保存する範囲がありません"); return; }
+  const n = plan.urls.length;
+  if(!confirm(n.toLocaleString()+"枚（およそ"+Math.round(plan.mb)+"MB）を保存します。\n"
+              +"数分かかります。Wi-Fi でどうぞ。")) return;
+  saving = true; cancelSave = false;
+  const btn = document.getElementById("tileSave");
+  const st  = document.getElementById("tileState");
+  btn.textContent = "中止";
+  const c = await caches.open(TILE_CACHE);
+  let done = 0, fail = 0;
+  for(const url of plan.urls){
+    if(cancelSave) break;
+    try{
+      if(!(await c.match(url, {ignoreVary:true}))){
+        const res = await fetch(url);
+        if(res && res.status === 200) await c.put(url, res);
+        else fail++;
+      }
+    }catch(e){ fail++; }
+    done++;
+    if(done % 5 === 0 || done === n){
+      st.textContent = "保存中 " + done + " / " + n;
+      await new Promise(r=> setTimeout(r, 120));   // 相手のサーバをいたわる
+    }
+  }
+  saving = false; btn.textContent = "この範囲を保存";
+  await renderTileRow();
+  toast(cancelSave ? "中止しました（"+done+"枚まで保存）"
+      : fail ? "保存しました（"+fail+"枚は取れませんでした）" : "保存しました");
+}
+
+async function clearTiles(){
+  if(!("caches" in window)) return;
+  if(!confirm("保存した地図を削除しますか？（配布の記録は消えません）")) return;
+  await caches.delete(TILE_CACHE);
+  await renderTileRow();
+  toast("保存した地図を削除しました");
+}
+
+async function renderTileRow(){
+  const st = document.getElementById("tileState");
+  const sw = document.getElementById("swState");
+  const btn = document.getElementById("tileSave");
+  btn.disabled = (pref.base === "osm");
+  btn.style.opacity = btn.disabled ? .45 : 1;
+  sw.textContent = !("serviceWorker" in navigator) ? "この端末では使えません"
+                 : navigator.serviceWorker.controller ? "有効（電波が無くても開けます）"
+                 : "次に開いたときから有効になります";
+  if(!("caches" in window)){ st.textContent = "この開き方では使えません"; return; }
+  if(saving) return;
+  const keys = await (await caches.open(TILE_CACHE)).keys();
+  if(!keys.length){ st.textContent = "未保存（表示した分は自動で残ります）"; return; }
+  let kb = 0;
+  keys.forEach(r=>{ kb += kbOf(zoomOfTileUrl(r.url)); });
+  st.textContent = keys.length.toLocaleString()+"枚（およそ"+Math.round(kb/1024)+"MB）";
+}
+
+async function checkUpdate(){
+  if(!swReg){ toast("この開き方では更新を確認できません"); return; }
+  toast("更新を確認しています…");
+  try{ await swReg.update(); }catch(e){}
+  if(swReg.waiting){
+    swReg.waiting.postMessage("skipWaiting");
+    setTimeout(()=> location.reload(), 500);
+  }else{
+    toast("すでに最新です");
+  }
+}
+
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("./sw.js")
+    .then(r=>{ swReg = r; renderTileRow(); })
+    .catch(()=>{});
+}
+
+/* =========================================================
    GPS記録
    ========================================================= */
 let tracking=false, watchId=null, cur=null, lastPt=null, wakeLock=null, tickTimer=null;
@@ -1581,7 +1738,7 @@ document.getElementById("addDay").onchange = e=>{
 
 const baseSel = document.getElementById("baseSel");
 baseSel.value = pref.base;
-baseSel.onchange = ()=> setBase(baseSel.value);
+baseSel.onchange = ()=>{ setBase(baseSel.value); renderTileRow(); };
 
 const RADII = [500,1000,1500,2000];
 function renderRad(){
@@ -1613,6 +1770,9 @@ document.getElementById("roadFetch").onclick  = fetchRoads;
 document.getElementById("roadImport").onclick = ()=> document.getElementById("roadFile").click();
 document.getElementById("roadFile").onchange  = e=>{ importRoadFile(e.target.files); e.target.value=""; };
 document.getElementById("roadClear").onclick  = clearRoads;
+document.getElementById("tileSave").onclick   = saveTiles;
+document.getElementById("tileClear").onclick  = clearTiles;
+document.getElementById("swUpdate").onclick   = checkUpdate;
 document.getElementById("setHomeMap").onclick = ()=>{
   const c = map.getCenter(); setHome([c.lat, c.lng]);
   panel.classList.remove("show");
