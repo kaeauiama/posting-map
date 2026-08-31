@@ -475,6 +475,20 @@
     読み込めなかったデータを書き出す
   </button>
 
+  <h3>手分けして配るとき</h3>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>この端末で配る人</b>
+      <em>入れておくと、書き出したファイルに誰の記録かが入ります。ひとりで使うなら空のままで結構です</em></div>
+    <input type="text" id="meName" placeholder="例：青山" style="width:100%;font-family:inherit;">
+  </div>
+  <div id="peopleBox"></div>
+  <div class="note">
+    手分けして配ったら、<b>各自が「JSONで書き出し」</b>して、まとめ役に送ってください。
+    まとめ役が「JSONを読み込み」で取り込むと、その人の記録として地図と集計に足されます。<br>
+    <b>同じファイルを2回取り込んでも二重にはなりません。</b>
+    枚数も、人ごとに分けて数えるので合算されます。
+  </div>
+
   <h3>書き出し・バックアップ</h3>
   <button class="wide" id="expCsv">CSVで書き出し（日付・版・枚数）</button>
   <button class="wide" id="expJson">JSONで書き出し（バックアップ）</button>
@@ -519,7 +533,10 @@ const dashOf = hex => (PALETTE.find(p=>p.hex===hex)||{}).dash || null;
    ========================================================= */
 const KEY  = "postingmap.v1";
 const PREF = "postingmap.pref.v1";
-const uid  = () => Date.now()*1000 + Math.floor(performance.now()%1000);
+/* 端末の中で重ならない番号。端末をまたぐと重なることがあるが、取り込みでは
+   「配った人＋番号」で見分けるので実害が出ない（rkey を参照）。 */
+let uidSeq = Math.floor(Math.random()*1000);
+const uid  = () => Date.now()*1000 + (uidSeq = (uidSeq + 1) % 1000);
 
 let loadError = false;              // 保存データが壊れていた（＝退避済み）
 function loadDB(){
@@ -554,6 +571,8 @@ function loadDB(){
     const old = d.tally; d.tally = {}; d.tally[f0] = old;
   }
   d.flyers.forEach(f=>{ if(!d.tally[f.id]) d.tally[f.id] = {}; });
+  // 手分けして配るとき、取り込んだ人の手入力枚数はここに入る（自分のぶんとは混ぜない）
+  if(!d.tallyBy || typeof d.tallyBy !== "object" || Array.isArray(d.tallyBy)) d.tallyBy = {};
   return d;
 }
 function saveDB(){
@@ -563,7 +582,7 @@ function saveDB(){
 }
 function loadPref(){
   const def = {base:"pale", hist:true, wake:true, metric:true, mode:"gps", only:false, interval:10,
-               miss:"none", home:null, radius:1500};
+               miss:"none", home:null, radius:1500, me:""};
   try{
     const p = Object.assign(def, JSON.parse(localStorage.getItem(PREF)) || {});
     if(p.fog !== undefined){ if(p.fog && p.miss==="none") p.miss="area"; delete p.fog; }
@@ -1655,6 +1674,10 @@ function statsFor(day, f){                      // f=null なら全部の版
     if(f!=null && fl.id!==f) return;
     count += (db.tally[fl.id]||{})[day] || 0;
   });
+  Object.keys(db.tallyBy||{}).forEach(who=>{        // 取り込んだ人の手入力ぶん
+    const box = db.tallyBy[who] || {};
+    db.flyers.forEach(fl=>{ if(f==null || fl.id===f) count += (box[fl.id]||{})[day] || 0; });
+  });
   db.sessions.forEach(s=>{
     if(dayOf(s.start)!==day || (f!=null && s.f!==f)) return;
     count += s.count||0; dm += pathLen(s.pts); ms += (s.end||s.start)-s.start;
@@ -1671,6 +1694,9 @@ function statsFor(day, f){                      // f=null なら全部の版
 function flyerTotals(f){
   let count=0, km=0, marks=0; const days=new Set();
   Object.entries(db.tally[f]||{}).forEach(([d,n])=>{ if(n){ count+=n; days.add(d); } });
+  Object.keys(db.tallyBy||{}).forEach(who=>{
+    Object.entries((db.tallyBy[who]||{})[f] || {}).forEach(([d,n])=>{ if(n){ count+=n; days.add(d); } });
+  });
   db.sessions.forEach(s=>{ if(s.f===f){ count+=s.count||0; km+=pathLen(s.pts)/1000; days.add(dayOf(s.start)); } });
   if(cur && cur.f===f){ count+=cur.count; km+=pathLen(cur.pts)/1000; days.add(dayOf(cur.start)); }
   db.marks.forEach(m=>{ if(m.f===f){ marks++; if(m.type==="line") km+=pathLen(m.pts)/1000; days.add(m.day); } });
@@ -2039,6 +2065,52 @@ function renderHist(){
 }
 function types(d){ return statsFor(d, null); }
 
+/* ---- 手分けして配るとき ---- */
+/* 取り込んだ人の一覧。記録（軌跡・手描き）と手入力の枚数の両方から拾う。 */
+function peopleList(){
+  const who = new Set();
+  db.sessions.forEach(s=>{ if(s.who) who.add(s.who); });
+  db.marks.forEach(m=>{ if(m.who) who.add(m.who); });
+  Object.keys(db.tallyBy||{}).forEach(w=> who.add(w));
+  return [...who].sort();
+}
+function personTotals(who){
+  let count = 0, km = 0, n = 0;
+  db.sessions.forEach(s=>{ if(s.who===who){ n++; count += s.count||0; km += pathLen(s.pts)/1000; } });
+  db.marks.forEach(m=>{ if(m.who===who){ n++; if(m.type==="line") km += pathLen(m.pts)/1000; } });
+  Object.values(db.tallyBy[who]||{}).forEach(byDay=>
+    Object.values(byDay).forEach(v=> count += v||0));
+  return {count, km, n};
+}
+function renderPeople(){
+  const box = document.getElementById("peopleBox");
+  const list = peopleList();
+  if(!list.length){ box.innerHTML = ""; return; }
+  box.innerHTML = '<div class="row" style="display:block;"><div class="g" style="margin-bottom:9px;">'
+    + '<b>取り込んだ人の記録</b><em>取り違えたときは削除してください。自分の記録は消えません</em></div>'
+    + list.map(w=>{
+        const t = personTotals(w);
+        return '<div style="display:flex;align-items:center;gap:8px;margin-top:7px;">'
+          + '<div style="flex:1;font-size:14px;">' + esc(w)
+          + '<span style="color:var(--ink-2);font-size:12px;"> ' + t.count + '枚 / '
+          + t.km.toFixed(1) + 'km / ' + t.n + '件</span></div>'
+          + '<button class="mini" data-drop="' + esc(w) + '">削除</button></div>';
+      }).join("")
+    + '</div>';
+  box.querySelectorAll("[data-drop]").forEach(b=> b.onclick = ()=> dropPerson(b.dataset.drop));
+}
+function dropPerson(who){
+  if(!confirm("「"+who+"」さんから取り込んだ記録を削除しますか？")) return;
+  db.sessions = db.sessions.filter(s=> s.who !== who);
+  db.marks    = db.marks.filter(m=> m.who !== who);
+  delete db.tallyBy[who];
+  saveDB(); drawHistory(); renderHist(); renderSummary(); renderPeople(); updateHud();
+  toast("「"+who+"」さんの記録を削除しました");
+}
+const meName = document.getElementById("meName");
+meName.value = pref.me || "";
+meName.onchange = ()=>{ pref.me = meName.value.trim(); savePref(); renderPeople(); };
+
 /* ---- 書き出し / 読み込み ---- */
 function download(name, text, mime){
   const url = URL.createObjectURL(new Blob([text], {type:mime}));
@@ -2063,7 +2135,12 @@ document.getElementById("expCsv").onclick = ()=>{
   toast("Excelやスプレッドシートで開けます");
 };
 document.getElementById("expJson").onclick = ()=>{
-  download("posting-"+today()+".json", JSON.stringify(db), "application/json");
+  const me = (pref.me||"").trim();
+  // 誰の記録かをファイルに入れる。手分けして配ったぶんを集めるときに要る。
+  // 名前が空なら今までと同じ中身（owner は空文字）。古い版でも読める。
+  const out = Object.assign({}, db, {owner: me, exported: Date.now()});
+  const tag = me ? "-" + me.replace(/[^\p{L}\p{N}_-]/gu, "") : "";
+  download("posting"+tag+"-"+today()+".json", JSON.stringify(out), "application/json");
   pref.lastBackup = Date.now(); savePref();
   document.getElementById("expJson").classList.remove("nag");
   showUsage();
@@ -2082,6 +2159,19 @@ document.getElementById("expGpx").onclick = ()=>{
     "application/gpx+xml");
 };
 document.getElementById("impJson").onclick = ()=> document.getElementById("fileIn").click();
+
+/* 記録を見分ける鍵。同じ番号でも「配った人」が違えば別のものとして扱う。
+   端末をまたぐと番号が重なることがあるため、番号だけでは足りない。 */
+const rkey = r => (r.who || "") + "|" + r.id;
+
+/* 手入力の枚数を、日ごとに大きい方で上書きする（同じものを2回入れても増えない） */
+function mergeTally(dst, src){
+  Object.keys(src||{}).forEach(fid=>{
+    dst[fid] = dst[fid] || {};
+    Object.keys(src[fid]||{}).forEach(d=> dst[fid][d] = Math.max(dst[fid][d]||0, src[fid][d]||0));
+  });
+}
+
 document.getElementById("fileIn").onchange = e=>{
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
@@ -2089,26 +2179,58 @@ document.getElementById("fileIn").onchange = e=>{
     try{
       const inc = JSON.parse(r.result);
       if(!inc || (!Array.isArray(inc.sessions) && !Array.isArray(inc.marks))) throw 0;
+
+      /* 読み込みは2通り。ファイルに入っている「配った人」で決める。
+         ・復元 …… 自分のバックアップ。今までどおり、同じものは増えない
+         ・取り込み …… ほかの人の記録。その人のものとして足す。2回入れても増えない
+         古い版で書き出したファイルには owner が無いので、必ず復元になる。 */
+      const owner = String(inc.owner || "").trim();
+      const me    = String(pref.me  || "").trim();
+      const merge = !!owner && owner !== me;
+      if(merge && !confirm("「"+owner+"」さんの記録として取り込みます。\nよろしいですか？")) return;
+
       let add = 0;
       const hf = new Set(db.flyers.map(x=>x.id));
       (inc.flyers||[]).forEach(x=>{ if(!hf.has(x.id)){ db.flyers.push(x); db.tally[x.id]=db.tally[x.id]||{}; } });
       const fallback = db.flyers[0].id;
-      const hs = new Set(db.sessions.map(s=>s.id));
-      (inc.sessions||[]).forEach(s=>{ if(!hs.has(s.id)){ s.f = s.f!=null && db.flyers.some(x=>x.id===s.f) ? s.f : fallback; db.sessions.push(s); add++; } });
-      const hm = new Set(db.marks.map(m=>m.id));
-      (inc.marks||[]).forEach(m=>{ if(!hm.has(m.id)){ m.f = m.f!=null && db.flyers.some(x=>x.id===m.f) ? m.f : fallback; db.marks.push(m); add++; } });
-      const it = inc.tally || {};
-      const flat = Object.keys(it).length && /^\d{4}-\d{2}-\d{2}$/.test(Object.keys(it)[0]);
-      if(flat){ db.tally[fallback] = db.tally[fallback]||{};
-        Object.keys(it).forEach(d=> db.tally[fallback][d] = Math.max(db.tally[fallback][d]||0, it[d]||0)); }
-      else Object.keys(it).forEach(fid=>{
-        const k = db.flyers.some(x=>String(x.id)===String(fid)) ? (db.flyers.find(x=>String(x.id)===String(fid)).id) : fallback;
-        db.tally[k] = db.tally[k]||{};
-        Object.keys(it[fid]).forEach(d=> db.tally[k][d] = Math.max(db.tally[k][d]||0, it[fid][d]||0));
+      const fixF = r2 => (r2.f!=null && db.flyers.some(x=>x.id===r2.f)) ? r2.f : fallback;
+      /* 取り込むときは送り主の名前を刻む。ただし自分の記録が回り回って戻ってきた
+         ぶんは、自分のものに戻す（そうしないと二重に増える）。 */
+      const stamp = r2 => {
+        if(merge && !r2.who) r2.who = owner;
+        if(r2.who && r2.who === me) delete r2.who;
+        return r2;
+      };
+
+      const hs = new Set(db.sessions.map(rkey));
+      (inc.sessions||[]).forEach(x=>{ stamp(x);
+        if(hs.has(rkey(x))) return; x.f = fixF(x); db.sessions.push(x); add++; });
+      const hm = new Set(db.marks.map(rkey));
+      (inc.marks||[]).forEach(x=>{ stamp(x);
+        if(hm.has(rkey(x))) return; x.f = fixF(x); db.marks.push(x); add++; });
+
+      // 手入力の枚数。旧形式 {日付:枚数} は最初の版のものとみなす
+      let it = inc.tally || {};
+      const k0 = Object.keys(it)[0];
+      if(k0 !== undefined && typeof it[k0] === "number"){ const o = {}; o[fallback] = it; it = o; }
+      if(merge){
+        if(Object.keys(it).length){                     // 人のぶんは別枠。自分のと足せるように
+          db.tallyBy[owner] = db.tallyBy[owner] || {};
+          mergeTally(db.tallyBy[owner], it);
+        }
+      }else{
+        mergeTally(db.tally, it);
+      }
+      // 送り主がすでに誰かを取り込んでいたら、その人のぶんも引き継ぐ
+      Object.keys(inc.tallyBy || {}).forEach(who=>{
+        if(who === me || !Object.keys(inc.tallyBy[who]||{}).length) return;   // 自分のぶんは自分の手入力が正
+        db.tallyBy[who] = db.tallyBy[who] || {};
+        mergeTally(db.tallyBy[who], inc.tallyBy[who]);
       });
+
       db.sessions.sort((a,b)=>a.start-b.start); db.marks.sort((a,b)=>a.ts-b.ts);
-      saveDB(); drawHistory(); renderHist(); renderSummary(); updateHud();
-      toast(add+"件を復元しました");
+      saveDB(); drawHistory(); renderHist(); renderSummary(); renderPeople(); updateHud();
+      toast(merge ? "「"+owner+"」さんの記録を"+add+"件取り込みました" : add+"件を復元しました");
     }catch(err){ toast("読み込めませんでした"); }
   };
   r.readAsText(f); e.target.value = "";
@@ -2197,7 +2319,7 @@ function backupNag(){
 
 /* ---- 起動 ---- */
 setMode(pref.mode || "gps");
-drawHistory(); updateHud(); syncMiss();
+drawHistory(); updateHud(); syncMiss(); renderPeople();
 checkPersist(true);            // 起動時に一度だけ永続化を要求する
 backupNag();
 if(loadError) setTimeout(()=> toast("前回の保存データを読み込めませんでした。壊れたデータは退避してあります"), 1200);

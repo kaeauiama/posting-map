@@ -82,6 +82,7 @@ npm run icons      # アイコンを作り直す
 | 手描き | タッチで線・面を引く、消す |
 | 集計 | `statsFor()`, `flyerTotals()`, `roadStats()` |
 | オフライン | Service Worker の登録、タイルのまとめ保存・削除・容量表示 |
+| 手分け配布 | 配った人の設定、取り込んだ人の一覧と削除 |
 | 画面 | メニュー、チラシの版、書き出し・読み込み |
 
 ### 保存しているもの
@@ -98,10 +99,19 @@ npm run icons      # アイコンを作り直す
 db = {
   flyers:  [{id, name, color, created}],   // チラシの版
   current: <flyerId>,                      // いま記録先になっている版
-  sessions:[{id, start, end, count, pts:[[lat,lng]…], f}],  // GPSの軌跡
-  marks:   [{id, ts, day, type:'line'|'area', pts, f}],     // 手描き
-  tally:   { [flyerId]: { "YYYY-MM-DD": 枚数 } }            // 手入力の枚数
+  sessions:[{id, start, end, count, pts:[[lat,lng]…], f, who?}],  // GPSの軌跡
+  marks:   [{id, ts, day, type:'line'|'area', pts, f, who?}],     // 手描き
+  tally:   { [flyerId]: { "YYYY-MM-DD": 枚数 } },           // 自分の手入力の枚数
+  tallyBy: { [who]: { [flyerId]: { "YYYY-MM-DD": 枚数 } } } // 取り込んだ人の手入力の枚数
 }
+```
+
+`who` は**取り込んだ他人の記録にだけ**付きます。自分の記録には付きません（付けると
+自分のデータが回り回って戻ってきたときに二重になる）。記録を見分ける鍵は
+**`who` と `id` の組**（`rkey()`）です。`id` は時刻ベースで端末をまたぐと重なるため、
+`id` だけで重複を判定してはいけません。
+
+```
 ```
 
 **配布済みかどうかは保存していません。** `sessions` と `marks` から毎回導出します
@@ -151,6 +161,7 @@ db = {
 - 道路まわりを触ったら、**実データでの取り込みと性能**（`08-roads.mjs`）
 - オフラインまわりを触ったら、**圏外での起動とタイル保存**（`10-offline.mjs`）
 - ポケットモードを触ったら、**暗くしても記録が同じこと**（`11-pocket.mjs`）
+- 書き出し・読み込みを触ったら、**古いデータと古いファイルが壊れないこと**（`12-merge.mjs`）
 
 `test/lib.mjs` の `open()` は既定で Service Worker を止めています。キャッシュの
 残りで他のテストが揺れるためです。必要なテストだけ `open({sw:true})` にしてください。
