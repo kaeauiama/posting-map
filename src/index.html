@@ -120,10 +120,10 @@
                   font-size:13px; font-weight:700; color:var(--ink-2); line-height:1.2;}
   #modebar button.sel{background:#fff; color:var(--ink); box-shadow:0 1px 4px #1824401f;}
   #modebar .sep{flex:none; width:1px; margin:5px 4px; background:#c9cfdb;}
-  #ivbar, #radbar, #missbar{display:flex; gap:7px;}
-  #ivbar button, #radbar button, #missbar button{flex:1; padding:11px 0; border-radius:10px;
+  #ivbar, #radbar, #missbar, #spanbar{display:flex; gap:7px;}
+  #ivbar button, #radbar button, #missbar button, #spanbar button{flex:1; padding:11px 0; border-radius:10px;
                 background:#eef1f6; border:1px solid var(--line); font-size:14px; font-weight:700;}
-  #ivbar button.sel, #radbar button.sel, #missbar button.sel{
+  #ivbar button.sel, #radbar button.sel, #missbar button.sel, #spanbar button.sel{
                 background:var(--ink); color:#fff; border-color:var(--ink);}
 
   /* GPS記録モードの操作 */
@@ -347,6 +347,9 @@
   <button class="closeX" id="closePanel">✕</button>
   <h2>配布マップ</h2>
 
+  <h3>月ごとの配布枚数</h3>
+  <div id="monthChart"></div>
+
   <h3>チラシの版ごとの集計</h3>
   <div id="flyerSummary"></div>
 
@@ -442,6 +445,23 @@
     <b>GPSそのものの消費電力はあまり変わりません</b>（受信機は動き続けるため）。
     ポスティング中に一番電池を使うのは<b>点けっぱなしの画面</b>なので、
     明るさを下げるか、モバイルバッテリーを持つのが確実です。
+  </div>
+
+  <h3>表示する期間</h3>
+  <div class="row" style="display:block;">
+    <div class="g" style="margin-bottom:9px;"><b>いつからの記録を表示するか</b>
+      <em>同じチラシを期間をあけて配るときは、前回の配布のあとから表示にすると
+      「今回まだ配っていない道」が見えます</em></div>
+    <div id="spanbar"></div>
+    <div style="display:flex; align-items:center; gap:8px; margin-top:9px;">
+      <span style="font-size:12px;color:var(--ink-2);white-space:nowrap;">開始日を指定</span>
+      <input type="date" id="spanFrom" style="flex:1;font-family:inherit;">
+      <button class="mini" id="spanClear">解除</button>
+    </div>
+  </div>
+  <div class="note">
+    ここで絞ると、<b>地図の履歴も、配り漏れの判定も</b>その期間だけで行います。
+    記録そのものは消えません。枚数とkmの集計は全期間のままです。
   </div>
 
   <h3>表示</h3>
@@ -582,7 +602,7 @@ function saveDB(){
 }
 function loadPref(){
   const def = {base:"pale", hist:true, wake:true, metric:true, mode:"gps", only:false, interval:10,
-               miss:"none", home:null, radius:1500, me:""};
+               miss:"none", home:null, radius:1500, me:"", span:0, from:null};
   try{
     const p = Object.assign(def, JSON.parse(localStorage.getItem(PREF)) || {});
     if(p.fog !== undefined){ if(p.fog && p.miss==="none") p.miss="area"; delete p.fog; }
@@ -819,18 +839,19 @@ function markArea(pts, hit){
 }
 function coverage(){
   if(!roads) return null;
-  if(covCache && covVer===dataVer) return covCache;
+  const key = dataVer + "|" + sinceTs();
+  if(covCache && covVer===key) return covCache;
   const per = new Map();
   const get = f => { let a=per.get(f); if(!a){ a=new Uint8Array(roads.n); per.set(f,a); } return a; };
-  db.sessions.forEach(s=>{ if(s.pts && s.pts.length>1) markLine(s.pts, get(s.f)); });
+  db.sessions.forEach(s=>{ if(s.pts && s.pts.length>1 && inSpan(s)) markLine(s.pts, get(s.f)); });
   db.marks.forEach(m=>{
-    if(!m.pts || m.pts.length<2) return;
+    if(!m.pts || m.pts.length<2 || !inSpan(m)) return;
     if(m.type==="area") markArea(m.pts, get(m.f)); else markLine(m.pts, get(m.f));
   });
   if(cur && cur.pts.length>1) markLine(cur.pts, get(cur.f));
   const any = new Uint8Array(roads.n);
   per.forEach(a=>{ for(let i=0;i<roads.n;i++) if(a[i]) any[i]=1; });
-  covCache = {per, any}; covVer = dataVer;
+  covCache = {per, any}; covVer = key;
   return covCache;
 }
 function inHome(i){
@@ -981,9 +1002,9 @@ const FogLayer = L.Layer.extend({
       pts.forEach((q,i)=>{ const a = P(q); i ? g.lineTo(a.x,a.y) : g.moveTo(a.x,a.y); });
       g.stroke();
     };
-    db.sessions.forEach(x=>{ if(visible(x.f)) stroke(x.pts); });
+    db.sessions.forEach(x=>{ if(visible(x.f) && inSpan(x)) stroke(x.pts); });
     db.marks.forEach(m=>{
-      if(!visible(m.f)) return;
+      if(!visible(m.f) || !inSpan(m)) return;
       if(m.type === "area"){
         if(m.pts.length < 3 || !view.intersects(L.latLngBounds(m.pts))) return;
         g.beginPath();
@@ -1192,20 +1213,42 @@ let meMarker = null, meCircle = null;
 
 function visible(f){ return !pref.only || f === db.current; }
 
+/* 表示する期間。古い記録を隠すだけでなく、配り漏れの判定もこの期間で行う。
+   同じチラシを期間をあけて何度も配るとき、全期間で数えると「もう全部配った」に
+   なって、2回目以降の配り漏れが見えなくなるため。 */
+const SPANS = [0, 60, 90, 180, 365];
+function sinceTs(){
+  if(pref.from){ const t = Date.parse(pref.from + "T00:00:00"); if(!isNaN(t)) return t; }
+  if(!pref.span) return 0;
+  const d = new Date(); d.setHours(0,0,0,0);     // 日単位に丸める（丸めないと被覆のキャッシュが毎回外れる）
+  return d.getTime() - pref.span*86400000;
+}
+function whenOf(r){                              // その記録が「いつ配ったぶん」か
+  if(r.start != null) return r.start;            // GPSの軌跡
+  if(r.day){ const t = Date.parse(r.day + "T00:00:00"); if(!isNaN(t)) return t; }
+  return r.ts || 0;                              // 手描き（記録日が無ければ描いた時刻）
+}
+function inSpan(r){ const t = sinceTs(); return !t || whenOf(r) >= t; }
+function spanLabel(){
+  if(pref.from) return pref.from.slice(5).replace("-","/") + "〜";
+  if(!pref.span) return "";
+  return pref.span >= 365 ? "1年" : pref.span + "日";
+}
+
 function drawHistory(){
   casingGroup.clearLayers(); histGroup.clearLayers();
   const w = strokeWeight();
   if(pref.hist && pref.miss!=="road"){    // 道路モードでは色分けと二重になるので出さない
     const n = db.sessions.length;
     db.sessions.forEach((s,i)=>{
-      if(!s.pts || s.pts.length < 2 || !visible(s.f)) return;
+      if(!s.pts || s.pts.length < 2 || !visible(s.f) || !inSpan(s)) return;
       const t = n>1 ? i/(n-1) : 1;
       L.polyline(s.pts, {color:"#fff", weight:w+4, opacity:.5, lineCap:"round", lineJoin:"round"}).addTo(casingGroup);
       L.polyline(s.pts, {color:fColor(s.f), weight:w, opacity:0.55+0.35*t, dashArray:dashOf(fColor(s.f)),
                          lineCap:"round", lineJoin:"round"}).addTo(histGroup);
     });
     db.marks.forEach(m=>{
-      if(!m.pts || m.pts.length < 2 || !visible(m.f)) return;
+      if(!m.pts || m.pts.length < 2 || !visible(m.f) || !inSpan(m)) return;
       const c = fColor(m.f);
       if(m.type === "area"){
         L.polygon(m.pts, {color:c, weight:2.5, opacity:.85, dashArray:dashOf(c),
@@ -1750,7 +1793,8 @@ function syncFlyerChip(){
   document.getElementById("countBtn").style.borderColor = f.color;
   document.getElementById("flyerName").textContent = f.name;
   const fc = document.getElementById("filterChip");
-  fc.textContent = pref.only ? "この版だけ" : "全部表示";
+  // 期間で絞っているあいだは、それもチップに出す（黙って履歴が消えると誤解を招く）
+  fc.textContent = (pref.only ? "この版だけ" : "全部表示") + (spanLabel() ? "・" + spanLabel() : "");
   fc.classList.toggle("on", pref.only);
 }
 document.getElementById("filterChip").onclick = ()=>{
@@ -1854,7 +1898,7 @@ dayPick.onchange = ()=>{ toast(dayPick.value+" として記録します"); };
 /* ---- メニュー ---- */
 const panel = document.getElementById("panel");
 document.querySelectorAll('[data-act="menu"]').forEach(b=>
-  b.onclick = ()=>{ renderHist(); renderSummary(); renderRoadRow(); checkPersist(false); showUsage();
+  b.onclick = ()=>{ renderHist(); renderSummary(); renderRoadRow(); renderSpan(); checkPersist(false); showUsage();
                     panel.classList.add("show"); });
 document.getElementById("closePanel").onclick = ()=> panel.classList.remove("show");
 
@@ -1872,6 +1916,23 @@ const baseSel = document.getElementById("baseSel");
 baseSel.value = pref.base;
 baseSel.onchange = ()=>{ setBase(baseSel.value); renderTileRow(); };
 
+function renderSpan(){
+  document.getElementById("spanbar").innerHTML = SPANS.map(v=>{
+    const on = !pref.from && pref.span === v;
+    const name = v===0 ? "全期間" : (v>=365 ? "1年" : v+"日");
+    return `<button data-span="${v}" class="${on?"sel":""}">${name}</button>`;
+  }).join("");
+  document.querySelectorAll("#spanbar button").forEach(b=> b.onclick = ()=>{
+    pref.span = +b.dataset.span; pref.from = null; applySpan();
+  });
+  document.getElementById("spanFrom").value = pref.from || "";
+  document.getElementById("spanClear").style.display = (pref.from || pref.span) ? "" : "none";
+}
+function applySpan(){
+  savePref(); renderSpan(); drawHistory(); renderSummary(); updateHud();
+  toast(spanLabel() ? spanLabel()+"の記録で表示します" : "全期間を表示します");
+}
+
 const RADII = [500,1000,1500,2000];
 function renderRad(){
   document.getElementById("radbar").innerHTML = RADII.map(v=>
@@ -1880,6 +1941,13 @@ function renderRad(){
     pref.radius = +b.dataset.r; savePref(); renderRad(); syncMiss();
   });
 }
+document.getElementById("spanFrom").onchange = e=>{
+  pref.from = e.target.value || null;
+  if(pref.from) pref.span = 0;
+  applySpan();
+};
+document.getElementById("spanClear").onclick = ()=>{ pref.from = null; pref.span = 0; applySpan(); };
+
 function syncHome(){
   const h = pref.home;
   document.getElementById("homeState").textContent =
@@ -1939,6 +2007,106 @@ syncToggles();
 if(!("wakeLock" in navigator))
   document.getElementById("wlState").textContent = "この端末は非対応（設定→画面表示と明るさ→自動ロック＝なし に）";
 
+/* 月ごとの配布枚数を、版ごとに積み上げた棒グラフにする。
+   枚数の出どころは3つ：手入力(tally)、取り込んだ人の手入力(tallyBy)、GPS記録中のタップ(session.count)。
+   色だけに頼らないよう、凡例に版名を出し、棒の上に合計を直接書く
+   （PALETTE は緑と赤が protan で ΔE 7.2。検証ツールが二重符号化を求めている）。 */
+function monthlyCounts(months){
+  const now = new Date(), keys = [];
+  for(let i=months-1; i>=0; i--){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    keys.push(d.getFullYear() + "-" + pad2(d.getMonth()+1));
+  }
+  const idx = new Map(keys.map((k,i)=>[k,i]));
+  const rows = keys.map(k=>({ym:k, by:new Map(), total:0}));
+  const add = (day, f, n) => {
+    if(!n) return;
+    const i = idx.get(String(day).slice(0,7));
+    if(i === undefined) return;
+    rows[i].by.set(f, (rows[i].by.get(f)||0) + n);
+    rows[i].total += n;
+  };
+  const toFlyer = fid => { const fl = db.flyers.find(x=>String(x.id)===String(fid)); return fl ? fl.id : null; };
+  Object.keys(db.tally||{}).forEach(fid=>{
+    const f = toFlyer(fid); if(f===null) return;
+    Object.entries(db.tally[fid]||{}).forEach(([d,n])=> add(d, f, n));
+  });
+  Object.keys(db.tallyBy||{}).forEach(who=>{
+    Object.keys(db.tallyBy[who]||{}).forEach(fid=>{
+      const f = toFlyer(fid); if(f===null) return;
+      Object.entries(db.tallyBy[who][fid]||{}).forEach(([d,n])=> add(d, f, n));
+    });
+  });
+  db.sessions.forEach(x=> add(dayOf(x.start), x.f, x.count||0));
+  if(cur) add(dayOf(cur.start), cur.f, cur.count||0);
+  return rows;
+}
+/* 最後に何かを配った日からの日数。版はまたいで数える
+   （同じ家に次を入れるまでの間隔は、デザインに関係なく空けたいため）。 */
+function daysSinceLast(){
+  let last = 0;
+  db.sessions.forEach(x=>{ if(x.pts && x.pts.length) last = Math.max(last, whenOf(x)); });
+  db.marks.forEach(m=> last = Math.max(last, whenOf(m)));
+  const days = {};
+  Object.values(db.tally||{}).forEach(o=> Object.keys(o).forEach(d=>{ if(o[d]) days[d]=1; }));
+  Object.values(db.tallyBy||{}).forEach(byF=> Object.values(byF).forEach(o=>
+    Object.keys(o).forEach(d=>{ if(o[d]) days[d]=1; })));
+  Object.keys(days).forEach(d=>{ const t = Date.parse(d+"T00:00:00"); if(!isNaN(t)) last = Math.max(last, t); });
+  if(!last) return null;
+  return Math.floor((Date.now() - last) / 86400000);
+}
+function renderMonths(){
+  const box = document.getElementById("monthChart");
+  const rows = monthlyCounts(12);
+  const max = Math.max(...rows.map(r=>r.total));
+  if(!max){ box.innerHTML = '<div class="note" style="margin-top:0;">まだ枚数の記録がありません。</div>'; return; }
+
+  const W=360, H=168, TOP=18, BOT=20, BW=20;          // 棒の幅は細め（指で触る対象ではない）
+  const plot = H - TOP - BOT;
+  const step = W / rows.length;
+  const y = v => TOP + plot - (v/max)*plot;
+  let bars = "";
+  rows.forEach((r,i)=>{
+    const x = i*step + (step-BW)/2;
+    let base = TOP + plot;
+    // 積む順は版の並び順で固定する。月ごとに順が変わると比べられなくなる
+    const segs = db.flyers.filter(f=> r.by.get(f.id) > 0).map(f=> [f.id, r.by.get(f.id)]);
+    segs.forEach(([f,n],k)=>{
+      const h = (n/max)*plot - (k < segs.length-1 ? 2 : 0);   // 積み上げの間に2pxの隙間
+      if(h <= 0.4) return;
+      const top = base - h;
+      const last = k === segs.length-1;
+      // いちばん上だけ角を丸める（データの端）
+      bars += last
+        ? `<path d="M${x} ${base} L${x} ${top+4} Q${x} ${top} ${x+4} ${top} L${x+BW-4} ${top} Q${x+BW} ${top} ${x+BW} ${top+4} L${x+BW} ${base} Z" fill="${fColor(f)}"/>`
+        : `<rect x="${x}" y="${top}" width="${BW}" height="${h}" fill="${fColor(f)}"/>`;
+      base = top - 2;
+    });
+    if(r.total){
+      bars += `<text x="${x+BW/2}" y="${y(r.total)-5}" text-anchor="middle" font-size="9"
+                fill="#5a6478" font-family="inherit">${r.total}</text>`;
+    }
+    const m = +r.ym.slice(5);
+    const label = m===1 ? r.ym.slice(2,4)+"年" : m+"月";
+    bars += `<text x="${x+BW/2}" y="${H-6}" text-anchor="middle" font-size="10"
+              fill="${m===1?"#182440":"#5a6478"}" font-family="inherit">${label}</text>`;
+  });
+  const used = db.flyers.filter(f=> rows.some(r=> r.by.get(f.id)));
+  const legend = used.map(f=>
+    `<span style="margin-right:12px;white-space:nowrap;"><span class="swatch" style="background:${f.color};
+      display:inline-block;vertical-align:-2px;margin-right:5px;"></span>${esc(f.name)}</span>`).join("");
+  const d = daysSinceLast();
+  box.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" role="img"
+       aria-label="月ごとの配布枚数">
+       <line x1="0" y1="${TOP+plot}" x2="${W}" y2="${TOP+plot}" stroke="#dfe3ec" stroke-width="1"/>
+       ${bars}
+     </svg>
+     <div style="font-size:12px;color:var(--ink-2);margin-top:6px;">${legend}</div>`
+    + (d===null ? "" : `<div style="font-size:12px;color:var(--ink-2);margin-top:6px;">
+        最後に配ってから <b style="color:var(--ink);">${d}日</b>（チラシの版はまたいで数えています）</div>`);
+}
+
 function renderSummary(){
   const hasR = !!roads;
   const rows = db.flyers.map(f=>{
@@ -1962,7 +2130,10 @@ function renderSummary(){
      </tbody></table>`
     + (hasR ? `<div style="font-size:12px;color:var(--ink-2);margin-top:8px;">
         商圏内の配布対象 ${allR.km.toFixed(1)}km（${allR.n.toLocaleString()}区間）のうち、
-        <b>未配布 ${(allR.km-allR.doneKm).toFixed(1)}km（${(allR.n-allR.done).toLocaleString()}区間）</b></div>` : "");
+        <b>未配布 ${(allR.km-allR.doneKm).toFixed(1)}km（${(allR.n-allR.done).toLocaleString()}区間）</b></div>` : "")
+    + (spanLabel() ? `<div style="font-size:12px;color:var(--ink-2);margin-top:6px;">
+        配布率は<b>「${spanLabel()}」の記録だけ</b>で計算しています。枚数とkmは全期間です。</div>` : "");
+  renderMonths();
 }
 /* その日・その版の枚数を「合計がnになるように」書き換える。
    GPS記録中にタップした分は残し、足りない/余る分を手入力ぶんで調整する。 */
@@ -2319,7 +2490,7 @@ function backupNag(){
 
 /* ---- 起動 ---- */
 setMode(pref.mode || "gps");
-drawHistory(); updateHud(); syncMiss(); renderPeople();
+drawHistory(); updateHud(); syncMiss(); renderPeople(); renderSpan();
 checkPersist(true);            // 起動時に一度だけ永続化を要求する
 backupNag();
 if(loadError) setTimeout(()=> toast("前回の保存データを読み込めませんでした。壊れたデータは退避してあります"), 1200);
