@@ -602,7 +602,7 @@ function saveDB(){
 }
 function loadPref(){
   const def = {base:"pale", hist:true, wake:true, metric:true, mode:"gps", only:false, interval:10,
-               miss:"none", home:null, radius:1500, me:"", span:0, from:null};
+               miss:"none", home:null, radius:1500, me:"", span:0, from:null, geoOK:false};
   try{
     const p = Object.assign(def, JSON.parse(localStorage.getItem(PREF)) || {});
     if(p.fog !== undefined){ if(p.fog && p.miss==="none") p.miss="area"; delete p.fog; }
@@ -1413,6 +1413,22 @@ function bearing(a,b){
   return (Math.atan2(y,x)*180/Math.PI + 360) % 360;
 }
 function turnAngle(a,b){ return Math.abs(((a-b+540)%360)-180); }
+/* 位置の監視は1本だけ持つ。記録していないときも現在地は出す
+   （飛び飛びに配るとき、止めたあと自分がどこにいるか分からないと再開しにくい）。
+   記録中かどうかは「点を残すか」と「画面を追従させるか」の違いだけ。
+   受信機そのものは2時間で電池の1〜2%しか使わない。アプリが前面にある間だけ動く。 */
+function wantWatch(){ return mode === "gps" && (tracking || pref.geoOK); }
+function ensureWatch(){
+  if(!("geolocation" in navigator)) return;
+  if(!wantWatch()){ stopWatch(); return; }
+  if(watchId !== null) return;
+  // maximumAge:0 …… 記録の1点目に古いキャッシュ位置が入って線が飛ぶのを防ぐ
+  watchId = navigator.geolocation.watchPosition(onPos, onErr,
+    {enableHighAccuracy:true, maximumAge:0, timeout:30000});
+}
+function stopWatch(){
+  if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+}
 function setGps(s){
   document.getElementById("gpsdot").style.background =
     ({off:"#bbb", wait:"#d97706", ok:"#4ade80", bad:"#dc2626"}[s]) || "#bbb";
@@ -1433,11 +1449,13 @@ function releaseWakeLock(){ if(wakeLock){ wakeLock.release().catch(()=>{}); wake
 
 let hiddenAt = 0;
 document.addEventListener("visibilitychange", ()=>{
-  if(!tracking) return;
-  if(document.visibilityState === "hidden"){ hiddenAt = Date.now(); return; }
+  if(document.visibilityState === "hidden"){
+    if(tracking) hiddenAt = Date.now(); else stopWatch();
+    return;
+  }
+  if(!tracking){ ensureWatch(); return; }   // 裏に回っている間は受信機を止めておく
   acquireWakeLock();
-  if(watchId !== null) navigator.geolocation.clearWatch(watchId);
-  watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:0, timeout:30000});
+  stopWatch(); ensureWatch();
   const gap = Date.now() - hiddenAt;
   if(hiddenAt && gap > 8000){
     splitSession();
@@ -1472,13 +1490,14 @@ function onPos(p){
   if(!meMarker){
     meMarker = L.circleMarker(here, {radius:8, color:"#fff", weight:3, fillColor:"#1668dc", fillOpacity:1}).addTo(map);
     meCircle = L.circle(here, {radius:acc, color:"#1668dc", weight:1, fillColor:"#1668dc", fillOpacity:.10}).addTo(map);
-    if(follow) map.setView(here, 17);
+    if(tracking && follow) map.setView(here, 17);   // 記録していないときは勝手に動かさない
   }else{
     meMarker.setLatLng(here); meCircle.setLatLng(here).setRadius(acc);
   }
-  setGps(acc<=25 ? "ok" : "wait");
-  // 毎回パンすると描画し続けて電池を食うので、画面の中央から外れたときだけ寄せる
-  if(follow && mode==="gps"){
+  if(!pref.geoOK){ pref.geoOK = true; savePref(); }   // 一度取れたら、次からは起動時に出す
+  if(tracking) setGps(acc<=25 ? "ok" : "wait");       // 緑の点は「記録中の受信状態」のまま
+  // 記録していないときは画面を動かさない（追従させなければ描き直しも起きない）
+  if(tracking && follow && mode==="gps"){
     const q = map.latLngToContainerPoint(here), sz = map.getSize();
     if(q.x < sz.x*0.25 || q.x > sz.x*0.75 || q.y < sz.y*0.22 || q.y > sz.y*0.78)
       map.panTo(here, {animate:true, duration:.6});
@@ -1507,14 +1526,19 @@ function takeFix(here, acc){
   cur.pts.push(here); lastPt = here; lastAt = now;
   return true;
 }
-function onErr(e){ setGps("bad"); if(e.code===1) toast("位置情報が許可されていません"); }
+function onErr(e){
+  if(e.code === 1){                       // 許可されていない。起動のたびに出し直さない
+    pref.geoOK = false; savePref(); stopWatch();
+    if(tracking) toast("位置情報が許可されていません");
+  }
+  if(tracking) setGps("bad");
+}
 
 function start(){
   if(!("geolocation" in navigator)){ toast("この端末では位置情報が使えません"); return; }
   tracking = true; cur = newSession(); lastPt = null; lastAt = 0; lastBrg = null; lastFix = null;
   liveLine.setLatLngs([]).setStyle({color:curF().color}); setGps("wait"); follow = true;
-  // maximumAge:0 …… 記録の1点目に古いキャッシュ位置が入って線が飛ぶのを防ぐ
-  watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:0, timeout:30000});
+  ensureWatch();
   acquireWakeLock();
   document.getElementById("startBtn").classList.add("on");
   document.getElementById("startLabel").textContent = "記録ストップ";
@@ -1526,7 +1550,7 @@ function stop(){
   tracking = false;
   exitPocket();
   document.body.classList.remove("tracking");
-  if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  ensureWatch();                 // 記録は止めるが、現在地の表示は続ける
   clearInterval(tickTimer); tickTimer=null;
   releaseWakeLock(); setGps("off");
   flushTail();
@@ -1610,7 +1634,9 @@ function targetDay(){ return document.getElementById("dayPick").value || today()
 function setMode(m){
   if(m !== "gps" && tracking) stop();
   mode = m; pref.mode = m; savePref();
-  document.body.className = "mode-" + m;
+  // 記録中・ポケット中の目印は残す（className ごと置き換えると消えてしまう）
+  const keep = ["tracking","pocket"].filter(c=> document.body.classList.contains(c));
+  document.body.className = ["mode-" + m].concat(keep).join(" ");
   document.querySelectorAll("#modebar button").forEach(b=> b.classList.toggle("sel", b.dataset.mode === m));
   document.getElementById("hintTop").textContent = {
     gps:"", draw:"1本指=なぞる ／ 2本指=地図を動かす",
@@ -1618,7 +1644,7 @@ function setMode(m){
   }[m];
   if(m==="draw" || m==="area"){ map.dragging.disable(); follow = false; }
   else { map.dragging.enable(); }
-  cancelStroke(); updateHud();
+  cancelStroke(); updateHud(); ensureWatch();
 }
 function cancelStroke(){ pts=null; lastScreen=null; drawingTouchId=null; drawLine.setLatLngs([]); }
 function toLatLng(cx, cy){
@@ -1888,7 +1914,7 @@ document.querySelectorAll('[data-act="loc"]').forEach(b=> b.onclick = ()=>{
   if(mode==="gps") follow = true;
   if(meMarker){ map.setView(meMarker.getLatLng(), 17); return; }
   navigator.geolocation.getCurrentPosition(
-    p=>{ map.setView([p.coords.latitude,p.coords.longitude],17); onPos(p); },
+    p=>{ map.setView([p.coords.latitude,p.coords.longitude],17); onPos(p); ensureWatch(); },
     ()=>toast("現在地を取得できません"), {enableHighAccuracy:true, timeout:15000});
 });
 const dayPick = document.getElementById("dayPick");
@@ -2490,7 +2516,7 @@ function backupNag(){
 
 /* ---- 起動 ---- */
 setMode(pref.mode || "gps");
-drawHistory(); updateHud(); syncMiss(); renderPeople(); renderSpan();
+drawHistory(); updateHud(); syncMiss(); renderPeople(); renderSpan(); ensureWatch();
 checkPersist(true);            // 起動時に一度だけ永続化を要求する
 backupNag();
 if(loadError) setTimeout(()=> toast("前回の保存データを読み込めませんでした。壊れたデータは退避してあります"), 1200);
